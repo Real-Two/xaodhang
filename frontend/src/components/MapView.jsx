@@ -21,10 +21,9 @@ const MAP_ZOOM = 7;
 // Soft bounds — let users pan if needed (pad gives 50% extra)
 const NER_BOUNDS = [[21.5, 88.0], [29.6, 97.5]];
 
-// OpenStreetMap — completely free, no API key ever needed.
-// CARTO dark_all now requires a paid API key (hence the watermark).
+// OpenStreetMap — zero API key requirement.
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
+const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 // ── Map click handler (inner component, has map context) ─────────────────────
 function MapClickHandler({ onMapClick }) {
