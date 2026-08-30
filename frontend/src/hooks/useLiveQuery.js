@@ -2,16 +2,11 @@ import { useCallback, useEffect, useRef } from 'react';
 import { predictLive } from '../api/client';
 import { useApp } from '../context/AppContext';
 
-// Backend can take up to ~20s for a live GEE fetch + model run.
-// Give 35s before hard abort so we never cut a valid response short.
-const TIMEOUT_MS = 35_000;
+const TIMEOUT_MS = 45_000;
 
 /**
- * useLiveQuery — state machine for POST /predict/live
- *
- * Call queryPoint(lat, lon) to start a query.
- * State transitions: idle → loading → done | error
- * While loading, liveQuery.elapsed counts up (for the UI countdown).
+ * useLiveQuery — handles the POST /predict/live interaction
+ * Provides real-time multi-stage feedback during GEE pipeline execution.
  */
 export function useLiveQuery() {
   const { state, actions } = useApp();
@@ -19,7 +14,6 @@ export function useLiveQuery() {
   const timerRef = useRef(null);
   const elapsedRef = useRef(0);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -28,7 +22,6 @@ export function useLiveQuery() {
   }, []);
 
   const queryPoint = useCallback(async (lat, lon) => {
-    // Cancel any in-flight query
     abortRef.current?.abort();
     clearInterval(timerRef.current);
     elapsedRef.current = 0;
@@ -36,15 +29,27 @@ export function useLiveQuery() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    actions.setLiveQuery({ status: 'loading', lat, lon, result: null, error: null, elapsed: 0 });
+    actions.setLiveQuery({
+      status: 'loading',
+      lat,
+      lon,
+      result: null,
+      error: null,
+      elapsed: 0,
+      stage: 'satellite',
+    });
 
-    // Elapsed counter — ticks every second for the UI countdown
+    // Multi-stage timer simulation for clear user transparency
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
-      actions.setLiveQuery({ elapsed: elapsedRef.current });
+      const el = elapsedRef.current;
+      let stage = 'satellite';
+      if (el > 12) stage = 'rainfall';
+      else if (el > 4) stage = 'model';
+
+      actions.setLiveQuery({ elapsed: el, stage });
     }, 1000);
 
-    // Hard abort after TIMEOUT_MS
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
@@ -52,34 +57,29 @@ export function useLiveQuery() {
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
-      // ── Debug: always log the raw response so field issues are visible ──
-      console.log('[RedBeryl] /predict/live raw response:', result);
-      console.log('[RedBeryl] risk_level:', result?.risk_level,
-                  '| combined_score:', result?.combined_score,
-                  '| cached:', result?.cached,
-                  '| has_heatmap:', !!result?.mask_png_base64);
-
-      // Validate the result has the fields we need
       if (!result || typeof result !== 'object') {
-        throw new Error(`Unexpected response type: ${typeof result}. Got: ${JSON.stringify(result).slice(0, 100)}`);
+        throw new Error('Invalid response received from prediction pipeline.');
       }
 
-      actions.setLiveQuery({ status: 'done', result });
+      actions.setLiveQuery({ status: 'done', result, stage: 'done' });
+      // Auto-select the live zone so the Zone Drawer opens with full breakdown
+      actions.setSelectedZone({
+        ...result,
+        source: 'live',
+      });
     } catch (err) {
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
-      console.error('[RedBeryl] /predict/live error:', err);
-
       if (err.name === 'AbortError') {
         actions.setLiveQuery({
           status: 'error',
-          error: `Request timed out after ${TIMEOUT_MS / 1000}s. The satellite fetch is taking longer than expected — try again.`,
+          error: `Satellite pipeline timed out after ${TIMEOUT_MS / 1000}s. Please click to retry.`,
         });
       } else {
         actions.setLiveQuery({
           status: 'error',
-          error: err.message || 'Live query failed.',
+          error: err.message || 'Live prediction failed. Check connection.',
         });
       }
     }

@@ -1,24 +1,48 @@
-import { createContext, useContext, useReducer, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useCallback } from 'react';
 
 // ── Initial State ─────────────────────────────────────────────────────────────
 
 const initialState = {
+  // Navigation & View
+  currentView: 'map',        // 'map' | 'priority' | 'reports'
+  searchQuery: '',
+  filterLevel: 'ALL',        // 'ALL' | 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW'
+
+  // Modals & Drawers
+  selectedZone: null,        // Zone object shown in ZoneDetailDrawer
+  activeModal: null,         // null | 'reportForm' | 'transparency' | 'alerts'
+
+  // Core Data
   zones: [],
   reports: [],
-  activeZone: null,          // full risk object for the selected zone
+
+  // Live Query State
   liveQuery: {
     status: 'idle',          // 'idle' | 'loading' | 'done' | 'error'
     lat: null,
     lon: null,
     result: null,
     error: null,
-    elapsed: 0,              // seconds elapsed while loading
+    elapsed: 0,
+    stage: 'idle',           // 'satellite' | 'model' | 'rainfall' | 'done'
   },
-  bandwidthMode: false,      // LOW bandwidth: no auto-load of heatmap imagery
-  heatmapVisible: true,      // master toggle for heatmap overlay layer
-  reportsVisible: true,      // toggle for report pins layer
+
+  // Map & GIS Settings
+  bandwidthMode: false,      // Low-bandwidth mode (reduces imagery/heavy layers)
+  layers: {
+    heatmap: true,
+    rainfall: true,
+    historical: true,
+    reports: true,
+    // Coming soon layers (always false)
+    soilMoisture: false,
+    deforestation: false,
+    mining: false,
+  },
+
+  // System & Connection
   backendOnline: null,       // null=unknown, true, false
-  lastRefresh: null,         // Date of last /zones fetch
+  lastRefresh: null,
   structuralResults: {},     // { [zoneId]: { mask_png_base64, ... } }
 };
 
@@ -26,6 +50,27 @@ const initialState = {
 
 function reducer(state, action) {
   switch (action.type) {
+    case 'SET_VIEW':
+      return { ...state, currentView: action.payload };
+
+    case 'SET_SEARCH_QUERY':
+      return { ...state, searchQuery: action.payload };
+
+    case 'SET_FILTER_LEVEL':
+      return { ...state, filterLevel: action.payload };
+
+    case 'SET_SELECTED_ZONE':
+      return { ...state, selectedZone: action.payload };
+
+    case 'CLEAR_SELECTED_ZONE':
+      return { ...state, selectedZone: null };
+
+    case 'OPEN_MODAL':
+      return { ...state, activeModal: action.payload };
+
+    case 'CLOSE_MODAL':
+      return { ...state, activeModal: null };
+
     case 'SET_ZONES':
       return { ...state, zones: action.payload, lastRefresh: new Date() };
 
@@ -34,12 +79,6 @@ function reducer(state, action) {
 
     case 'ADD_REPORT':
       return { ...state, reports: [action.payload, ...state.reports] };
-
-    case 'SET_ACTIVE_ZONE':
-      return { ...state, activeZone: action.payload };
-
-    case 'CLEAR_ACTIVE_ZONE':
-      return { ...state, activeZone: null };
 
     case 'SET_LIVE_QUERY':
       return { ...state, liveQuery: { ...state.liveQuery, ...action.payload } };
@@ -50,11 +89,14 @@ function reducer(state, action) {
     case 'TOGGLE_BANDWIDTH':
       return { ...state, bandwidthMode: !state.bandwidthMode };
 
-    case 'TOGGLE_HEATMAP':
-      return { ...state, heatmapVisible: !state.heatmapVisible };
-
-    case 'TOGGLE_REPORTS':
-      return { ...state, reportsVisible: !state.reportsVisible };
+    case 'TOGGLE_LAYER':
+      return {
+        ...state,
+        layers: {
+          ...state.layers,
+          [action.payload]: !state.layers[action.payload],
+        },
+      };
 
     case 'SET_BACKEND_STATUS':
       return { ...state, backendOnline: action.payload };
@@ -72,14 +114,12 @@ function reducer(state, action) {
       return {
         ...state,
         zones: state.zones.map(z =>
-          z.id === action.payload.id
-            ? { ...z, ...action.payload }
-            : z
+          z.id === action.payload.id ? { ...z, ...action.payload } : z
         ),
-        activeZone:
-          state.activeZone?.id === action.payload.id
-            ? { ...state.activeZone, ...action.payload }
-            : state.activeZone,
+        selectedZone:
+          state.selectedZone?.id === action.payload.id
+            ? { ...state.selectedZone, ...action.payload }
+            : state.selectedZone,
       };
 
     default:
@@ -94,18 +134,21 @@ const AppContext = createContext(null);
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  // Convenience action creators
   const actions = {
+    setView: useCallback(v => dispatch({ type: 'SET_VIEW', payload: v }), []),
+    setSearchQuery: useCallback(q => dispatch({ type: 'SET_SEARCH_QUERY', payload: q }), []),
+    setFilterLevel: useCallback(lvl => dispatch({ type: 'SET_FILTER_LEVEL', payload: lvl }), []),
+    setSelectedZone: useCallback(z => dispatch({ type: 'SET_SELECTED_ZONE', payload: z }), []),
+    clearSelectedZone: useCallback(() => dispatch({ type: 'CLEAR_SELECTED_ZONE' }), []),
+    openModal: useCallback(m => dispatch({ type: 'OPEN_MODAL', payload: m }), []),
+    closeModal: useCallback(() => dispatch({ type: 'CLOSE_MODAL' }), []),
     setZones: useCallback(z => dispatch({ type: 'SET_ZONES', payload: z }), []),
     setReports: useCallback(r => dispatch({ type: 'SET_REPORTS', payload: r }), []),
     addReport: useCallback(r => dispatch({ type: 'ADD_REPORT', payload: r }), []),
-    setActiveZone: useCallback(z => dispatch({ type: 'SET_ACTIVE_ZONE', payload: z }), []),
-    clearActiveZone: useCallback(() => dispatch({ type: 'CLEAR_ACTIVE_ZONE' }), []),
     setLiveQuery: useCallback(p => dispatch({ type: 'SET_LIVE_QUERY', payload: p }), []),
     resetLiveQuery: useCallback(() => dispatch({ type: 'RESET_LIVE_QUERY' }), []),
     toggleBandwidth: useCallback(() => dispatch({ type: 'TOGGLE_BANDWIDTH' }), []),
-    toggleHeatmap: useCallback(() => dispatch({ type: 'TOGGLE_HEATMAP' }), []),
-    toggleReports: useCallback(() => dispatch({ type: 'TOGGLE_REPORTS' }), []),
+    toggleLayer: useCallback(layer => dispatch({ type: 'TOGGLE_LAYER', payload: layer }), []),
     setBackendStatus: useCallback(s => dispatch({ type: 'SET_BACKEND_STATUS', payload: s }), []),
     setStructuralResult: useCallback((zoneId, result) =>
       dispatch({ type: 'SET_STRUCTURAL_RESULT', payload: { zoneId, result } }), []),
