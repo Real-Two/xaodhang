@@ -130,14 +130,18 @@ export async function postReport({ lat, lon, description, photo }) {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
-/** Ping the backend — resolves true if reachable, false otherwise */
+/** Ping the backend — resolves true if reachable, false otherwise.
+ *  Uses GET /zones (the same call useZones makes) so no extra endpoint needed.
+ *  HEAD was returning 405 because FastAPI routes need explicit HEAD support.
+ */
 export async function pingBackend() {
   try {
     const res = await fetch(`${BASE_URL}/zones`, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(4000),
+      method: 'GET',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
     });
-    return res.ok || res.status < 500;
+    return res.status < 500; // 200 = up, 4xx = up but error, 5xx = down
   } catch (_) {
     return false;
   }
