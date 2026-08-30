@@ -21,11 +21,10 @@ const MAP_ZOOM = 7;
 // Soft bounds — let users pan if needed (pad gives 50% extra)
 const NER_BOUNDS = [[21.5, 88.0], [29.6, 97.5]];
 
-// CartoDB Dark Matter — free, no API key needed.
-// {r} retina suffix stripped — Leaflet 1.x doesn't expand it, CARTO rejects the literal string.
-// Fallback: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-const TILE_ATTR = '© OpenStreetMap © CARTO';
+// OpenStreetMap — completely free, no API key ever needed.
+// CARTO dark_all now requires a paid API key (hence the watermark).
+const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
 // ── Map click handler (inner component, has map context) ─────────────────────
 function MapClickHandler({ onMapClick }) {
