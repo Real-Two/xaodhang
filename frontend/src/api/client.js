@@ -17,7 +17,11 @@ class ApiError extends Error {
 async function request(method, path, options = {}) {
   const { body, formData, signal } = options;
 
-  const headers = {};
+  const headers = {
+    // ngrok free tier intercepts browser requests with an HTML interstitial
+    // unless this header is present — without it the backend appears offline
+    'ngrok-skip-browser-warning': 'true',
+  };
   let reqBody = undefined;
 
   if (formData) {
@@ -138,6 +142,7 @@ export async function pingBackend() {
     const res = await fetch(`${BASE_URL}/`, {
       method: 'GET',
       cache: 'no-store',
+      headers: { 'ngrok-skip-browser-warning': 'true' },
       signal: AbortSignal.timeout(5000),
     });
     return res.status < 500;

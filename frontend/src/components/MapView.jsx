@@ -143,7 +143,7 @@ export default function MapView({ mapRef }) {
         <TileLayer
           url={TILE_URL}
           attribution={TILE_ATTR}
-          subdomains="abcd"
+          subdomains="abc"
           maxZoom={19}
         />
 
