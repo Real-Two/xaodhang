@@ -1,0 +1,400 @@
+/* ============================================================
+   RedBeryl Design System — index.css
+   Dark-mode dashboard, glassmorphism, colorblind-safe risk palette
+   ============================================================ */
+
+/* ---------- Google Fonts ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ---------- CSS Custom Properties ---------- */
+:root {
+  /* Base palette */
+  --bg-deep:       #0a0f1e;
+  --bg-surface:    #0e1628;
+  --bg-card:       rgba(255, 255, 255, 0.04);
+  --bg-card-hover: rgba(255, 255, 255, 0.07);
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  /* Text */
+  --text-primary:   #f0f4ff;
+  --text-secondary: #8b9cbf;
+  --text-muted:     #4e5e7a;
+
+  /* Accent */
+  --accent:        #3b7ff5;
+  --accent-glow:   rgba(59, 127, 245, 0.25);
+
+  /* Risk levels — exact PS spec: colorblind-safe, distinct at small marker size */
+  --risk-low:          #4CAF50;
+  --risk-low-bg:       rgba(76, 175, 80, 0.12);
+  --risk-low-glow:     rgba(76, 175, 80, 0.3);
+
+  --risk-moderate:     #FF9800;
+  --risk-moderate-bg:  rgba(255, 152, 0, 0.12);
+  --risk-moderate-glow:rgba(255, 152, 0, 0.3);
+
+  --risk-high:         #F44336;
+  --risk-high-bg:      rgba(244, 67, 54, 0.12);
+  --risk-high-glow:    rgba(244, 67, 54, 0.3);
+
+  --risk-critical:     #7B1FA2;
+  --risk-critical-bg:  rgba(123, 31, 162, 0.15);
+  --risk-critical-glow:rgba(123, 31, 162, 0.4);
+
+  /* Typography */
+  --font-ui:      'Inter', system-ui, sans-serif;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+
+  /* Spacing */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Radii */
+  --r-sm:  6px;
+  --r-md:  10px;
+  --r-lg:  16px;
+  --r-xl:  24px;
+  --r-full: 9999px;
+
+  /* Glass */
+  --glass-bg:     rgba(14, 22, 40, 0.85);
+  --glass-blur:   backdrop-filter: blur(16px) saturate(160%);
+  --shadow-card:  0 4px 24px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255,255,255,0.05);
+  --shadow-float: 0 8px 40px rgba(0, 0, 0, 0.6);
+
+  /* Transitions */
+  --t-fast:   150ms ease;
+  --t-normal: 250ms ease;
+  --t-slow:   400ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layout */
+  --sidebar-w:    320px;
+  --statusbar-h:  36px;
+  --panel-z:      1000;
+  --modal-z:      2000;
+  --toast-z:      3000;
+}
+
+/* ---------- Reset & Base ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-deep);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------- Typography ---------- */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-full);
+}
+
+/* ---------- Risk Utility Classes ---------- */
+.risk-low      { color: var(--risk-low);      }
+.risk-moderate { color: var(--risk-moderate);  }
+.risk-high     { color: var(--risk-high);      }
+.risk-critical { color: var(--risk-critical);  }
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-display);
+}
+.risk-badge.low      { background: var(--risk-low-bg);      color: var(--risk-low);      border: 1px solid rgba(74,222,128,0.25); }
+.risk-badge.moderate { background: var(--risk-moderate-bg); color: var(--risk-moderate); border: 1px solid rgba(250,204,21,0.25); }
+.risk-badge.high     { background: var(--risk-high-bg);     color: var(--risk-high);     border: 1px solid rgba(251,146,60,0.25); }
+.risk-badge.critical { background: var(--risk-critical-bg); color: var(--risk-critical); border: 1px solid rgba(248,113,113,0.25); animation: critical-pulse 2s infinite; }
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+  min-height: 36px;
+  white-space: nowrap;
+  user-select: none;
+}
+.btn:hover { background: var(--bg-card-hover); border-color: var(--border-strong); }
+.btn:active { transform: scale(0.97); }
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+.btn-primary:hover { background: #2f6de0; }
+.btn-danger { border-color: var(--risk-high); color: var(--risk-high); }
+.btn-danger:hover { background: var(--risk-high-bg); }
+
+/* ---------- Glass Cards ---------- */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* ---------- Form Elements ---------- */
+input, textarea, select {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  width: 100%;
+  transition: border-color var(--t-fast), background var(--t-fast);
+  outline: none;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+  background: rgba(59,127,245,0.06);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--text-muted);
+}
+textarea { resize: vertical; min-height: 80px; }
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-1);
+  letter-spacing: 0.02em;
+}
+
+/* ---------- Progress Bar ---------- */
+.progress-bar-track {
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: var(--r-full);
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  border-radius: var(--r-full);
+  transition: width 0.6s cubic-bezier(0.16,1,0.3,1);
+}
+
+/* ---------- Divider ---------- */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--sp-4) 0;
+}
+
+/* ---------- Keyframe Animations ---------- */
+@keyframes critical-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--risk-critical-glow); }
+  50%       { box-shadow: 0 0 0 6px transparent; }
+}
+
+@keyframes marker-pulse {
+  0%   { transform: scale(1); opacity: 1; }
+  100% { transform: scale(3); opacity: 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ---------- Skeleton Loading ---------- */
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.5s infinite linear;
+  border-radius: var(--r-sm);
+}
+
+/* ---------- Spinner ---------- */
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.12);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.spinner-lg {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+/* ---------- Leaflet Overrides ---------- */
+.leaflet-container {
+  background: #0d1929;
+  font-family: var(--font-ui);
+}
+.leaflet-control-zoom {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-md) !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-card) !important;
+}
+.leaflet-control-zoom a {
+  background: var(--glass-bg) !important;
+  color: var(--text-primary) !important;
+  border: none !important;
+  backdrop-filter: blur(12px);
+}
+.leaflet-control-zoom a:hover { background: var(--bg-card-hover) !important; }
+.leaflet-popup-content-wrapper {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.leaflet-popup-tip-container { display: none !important; }
+.leaflet-popup-content { margin: 0 !important; }
+
+/* ---------- Layout Shell ---------- */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.map-wrapper {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ---------- Floating Controls ---------- */
+.floating-controls {
+  position: absolute;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  z-index: var(--panel-z);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.floating-controls-left {
+  position: absolute;
+  bottom: var(--sp-8);
+  left: var(--sp-4);
+  z-index: var(--panel-z);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* ---------- Mobile Adjustments ---------- */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-w: 100%;
+  }
+}
+
+/* ---------- Tooltip ---------- */
+.tooltip {
+  position: relative;
+}
+.tooltip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a2540;
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+  z-index: 9999;
+}
+.tooltip:hover::after { opacity: 1; }

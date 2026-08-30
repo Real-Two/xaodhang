@@ -1,0 +1,71 @@
+# ── Python / FastAPI backend ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+*.so
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+*.sqlite3
+*.db
+
+# ── Node / React frontend ─────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+frontend/.vite/
+frontend/*.local
+
+# ── ML model artifacts ────────────────────────────────────────────────────────
+*.onnx
+*.h5
+*.pt
+*.pth
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.joblib
+
+# ── Satellite / GIS data ─────────────────────────────────────────────────────
+*.tif
+*.tiff
+*.geotiff
+*.shp
+*.shx
+*.dbf
+*.prj
+*.gpkg
+*.nc
+
+# ── OS / editor junk ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
