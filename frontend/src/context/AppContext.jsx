@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react';
 
 // ── Initial State ─────────────────────────────────────────────────────────────
 
@@ -134,6 +134,11 @@ const AppContext = createContext(null);
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
+  // Shared Leaflet map instance ref — lets ANY component (search bar,
+  // priority list, alerts drawer, etc.) fly the map to a location without
+  // prop-drilling. MapView attaches this to <MapContainer ref={mapRef}>.
+  const mapRef = useRef(null);
+
   const actions = {
     setView: useCallback(v => dispatch({ type: 'SET_VIEW', payload: v }), []),
     setSearchQuery: useCallback(q => dispatch({ type: 'SET_SEARCH_QUERY', payload: q }), []),
@@ -156,7 +161,7 @@ export function AppProvider({ children }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, actions }}>
+    <AppContext.Provider value={{ state, actions, mapRef }}>
       {children}
     </AppContext.Provider>
   );

@@ -132,6 +132,48 @@ export async function postReport({ lat, lon, description, photo }) {
   return request('POST', '/reports', { formData: fd });
 }
 
+// ── Geocoding (search any road/village/town in NER) ───────────────────────────
+
+// left,top,right,bottom (lon/lat) — same bounding box MapView uses for NER_BOUNDS
+const NER_VIEWBOX = '88.0,29.6,97.5,21.5';
+
+/**
+ * geocodeSearch — free OpenStreetMap Nominatim lookup, restricted to NER.
+ * Lets users search for ANY named road/village/town, not just the zones
+ * already being monitored. Callers must debounce (Nominatim usage policy
+ * asks for ~1 request/sec max) — see HeaderBar's search debounce.
+ * https://operations.osmfoundation.org/policies/nominatim/
+ */
+export async function geocodeSearch(query, signal) {
+  if (!query || query.trim().length < 3) return [];
+
+  const url =
+    `https://nominatim.openstreetmap.org/search?format=jsonv2` +
+    `&q=${encodeURIComponent(query)}` +
+    `&viewbox=${NER_VIEWBOX}&bounded=1&countrycodes=in&limit=6`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'Accept-Language': 'en' },
+      signal,
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.map(d => ({
+      type: 'place',
+      id: `osm-${d.place_id}`,
+      label: d.display_name,
+      lat: parseFloat(d.lat),
+      lon: parseFloat(d.lon),
+      osmType: d.type, // 'village', 'residential' (road), 'town', etc.
+    }));
+  } catch (err) {
+    if (err.name === 'AbortError') return [];
+    console.warn('[geocodeSearch] failed:', err);
+    return [];
+  }
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
 /** Ping the backend root — returns {"status":"ok"}, definitely accepts GET.

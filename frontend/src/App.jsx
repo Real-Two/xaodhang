@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { useZones } from './hooks/useZones';
 import { useReports } from './hooks/useReports';
@@ -17,8 +17,7 @@ import './App.css';
 
 // Main Dashboard Shell
 function DashboardShell() {
-  const mapRef = useRef(null);
-  const { state, actions } = useApp();
+  const { state, actions, mapRef } = useApp();
 
   // Polling hooks for live telemetry
   useZones();
