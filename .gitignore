@@ -57,6 +57,7 @@ frontend/*.local
 *.nc
 
 # ── OS / editor junk ──────────────────────────────────────────────────────────
+*.zip
 .DS_Store
 Thumbs.db
 desktop.ini
