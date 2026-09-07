@@ -1,0 +1,31 @@
+# Database — Railway uses its own persistent volume
+risk.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Env file — NEVER commit secrets
+.env
+
+# Uploaded citizen photos — local only
+uploads/*
+!uploads/.gitkeep
+
+# Tunnel exe — too big / platform-specific
+cloudflared.exe
+ngrok.exe
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# model.onnx and model.onnx.data are intentionally NOT ignored
+# They are 29MB total — fine for GitHub, needed by Railway to run
