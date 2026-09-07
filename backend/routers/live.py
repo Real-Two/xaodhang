@@ -22,8 +22,13 @@ from risk_engine import compute_combined_risk, compute_rainfall_risk
 # uvicorn is always launched from the project root folder, so the root IS
 # on Python's path already. The relative sys.path trick fails on Windows
 # multiprocessing; this approach does not.
-import fetch_real_patch
-import fetch_rainfall_chirps
+try:
+    import fetch_real_patch
+    import fetch_rainfall_chirps
+    _GEE_ROUTERS_AVAILABLE = True
+except Exception as _gee_import_err:
+    _GEE_ROUTERS_AVAILABLE = False
+    print(f"[WARN] live.py: GEE modules not available: {_gee_import_err}. /predict/live will return 503.")
 
 router = APIRouter(prefix="/predict", tags=["live-prediction"])
 
@@ -75,6 +80,12 @@ def predict_live(
     cached = zone is not None
 
     if zone is None:
+        if not _GEE_ROUTERS_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="Live prediction unavailable: GEE not configured on this server. "
+                       "Use the seeded zones via /zones and /risk/{zone_id} instead."
+            )
         try:
             patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
         except RuntimeError as e:

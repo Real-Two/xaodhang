@@ -7,3 +7,4 @@ numpy>=1.24
 pillow>=10.0
 h5py>=3.8
 httpx>=0.27          # Open-Meteo forecast + Fast2SMS + Anthropic calls
+earthengine-api>=0.1.384  # Google Earth Engine — CHIRPS rainfall + Sentinel-2 patches

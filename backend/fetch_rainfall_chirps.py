@@ -7,16 +7,26 @@ this same period last year". This is standard practice in operational forecastin
 when real-time data is unavailable, and is disclosed to judges as such.
 """
 
-import ee
 import datetime
+
+try:
+    import ee
+    _GEE_AVAILABLE = True
+except ImportError:
+    _GEE_AVAILABLE = False
 
 
 def initialize_gee(project: str):
+    if not _GEE_AVAILABLE:
+        raise RuntimeError("earthengine-api not installed.")
     try:
         ee.Initialize(project=project)
     except Exception:
-        ee.Authenticate()
-        ee.Initialize(project=project)
+        try:
+            ee.Authenticate()
+            ee.Initialize(project=project)
+        except Exception as e:
+            raise RuntimeError(f"GEE auth failed: {e}")
 
 
 def fetch_chirps_accumulation(lat: float, lon: float, days_back: int = 15) -> float:
