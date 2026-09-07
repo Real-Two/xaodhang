@@ -28,36 +28,16 @@ import io
 # This lets the server boot on Railway even before GEE credentials are configured.
 try:
     import ee
+    from gee_auth import initialize_gee
     _GEE_AVAILABLE = True
 except ImportError:
     _GEE_AVAILABLE = False
+    def initialize_gee(project): raise RuntimeError("earthengine-api not installed.")
 
 # Landslide4Sense band convention: 12 S2 bands (NO B8A) + slope + elevation
 S2_BANDS = ['B1','B2','B3','B4','B5','B6','B7','B8','B9','B10','B11','B12']
 BAND_NAMES = S2_BANDS + ['slope', 'elevation']
 assert len(BAND_NAMES) == 14, f"BAND_NAMES must have 14 entries, has {len(BAND_NAMES)}"
-
-
-def initialize_gee(project: str):
-    if not _GEE_AVAILABLE:
-        raise RuntimeError(
-            "earthengine-api not installed. "
-            "Add 'earthengine-api' to requirements.txt and redeploy."
-        )
-    # On Railway/cloud: uses GOOGLE_APPLICATION_CREDENTIALS env var (service account JSON path)
-    # or EE_SERVICE_ACCOUNT + EE_PRIVATE_KEY env vars (see README).
-    # Locally: falls back to interactive ee.Authenticate() if not already authed.
-    try:
-        ee.Initialize(project=project)
-    except Exception:
-        try:
-            ee.Authenticate()
-            ee.Initialize(project=project)
-        except Exception as e:
-            raise RuntimeError(
-                f"GEE authentication failed: {e}. "
-                "On Railway, set GOOGLE_APPLICATION_CREDENTIALS to your service account JSON path."
-            )
 
 
 def _get_s2_median(point, start_str, end_str, cloud_pct: float = 30):

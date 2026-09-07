@@ -11,22 +11,11 @@ import datetime
 
 try:
     import ee
+    from gee_auth import initialize_gee
     _GEE_AVAILABLE = True
 except ImportError:
     _GEE_AVAILABLE = False
-
-
-def initialize_gee(project: str):
-    if not _GEE_AVAILABLE:
-        raise RuntimeError("earthengine-api not installed.")
-    try:
-        ee.Initialize(project=project)
-    except Exception:
-        try:
-            ee.Authenticate()
-            ee.Initialize(project=project)
-        except Exception as e:
-            raise RuntimeError(f"GEE auth failed: {e}")
+    def initialize_gee(project): raise RuntimeError("earthengine-api not installed.")
 
 
 def fetch_chirps_accumulation(lat: float, lon: float, days_back: int = 15) -> float:
