@@ -18,6 +18,41 @@ from routers import live, predict, rainfall, reports, zones, forecast, alerts, c
 
 Base.metadata.create_all(bind=engine)
 
+# ---------------------------------------------------------------------------
+# Auto-seed zones on startup if the DB is empty.
+# This means Railway's ephemeral SQLite is always populated after a redeploy.
+# ---------------------------------------------------------------------------
+def _auto_seed():
+    from database import SessionLocal
+    from models import Zone
+
+    NER_ZONES = [
+        {"name": "Noney, Manipur (2022 landslide site)",   "lat": 24.9833, "lon": 93.4833},
+        {"name": "Tupul, Manipur (railway landslide)",      "lat": 24.9500, "lon": 93.5000},
+        {"name": "Aizawl-Thenzawl Highway, Mizoram",       "lat": 23.5000, "lon": 92.8000},
+        {"name": "Shillong-Silchar NH6, Meghalaya",        "lat": 25.1000, "lon": 92.0000},
+        {"name": "Kohima-Imphal NH2, Nagaland",            "lat": 25.4000, "lon": 94.1000},
+        {"name": "Jiribam-Imphal Highway, Manipur",        "lat": 24.8000, "lon": 93.1200},
+        {"name": "Gangtok-Nathula, Sikkim",                "lat": 27.3300, "lon": 88.6200},
+        {"name": "Tawang Highway, Arunachal Pradesh",      "lat": 27.5800, "lon": 91.8600},
+        {"name": "Dima Hasao District, Assam",             "lat": 25.5700, "lon": 93.0500},
+        {"name": "Champhai, Mizoram (border zone)",        "lat": 23.4600, "lon": 93.3300},
+    ]
+
+    db = SessionLocal()
+    try:
+        if db.query(Zone).count() == 0:
+            for z in NER_ZONES:
+                db.add(Zone(**z))
+            db.commit()
+            print(f"[SEED] Auto-seeded {len(NER_ZONES)} NER zones into fresh database.")
+        else:
+            print(f"[SEED] Database already has zones — skipping auto-seed.")
+    finally:
+        db.close()
+
+_auto_seed()
+
 app = FastAPI(
     title="NER Landslide Early Warning API",
     description="Combines satellite-based structural risk (U-Net) with "
