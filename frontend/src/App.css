@@ -1793,3 +1793,192 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ── 10. Live Query Map Pin & Popup ────────────────────────────────────────── */
+
+/* Spinner pin */
+.live-pin-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.live-pin-timer {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand-orange);
+  background: rgba(0,0,0,0.7);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Error pin */
+.live-pin-error {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--risk-critical);
+  color: #fff;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 12px rgba(239,68,68,0.5);
+}
+
+/* Spinner keyframe (used by .spinner class) */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spinner {
+  border: 3px solid rgba(255,255,255,0.15);
+  border-top-color: var(--brand-orange);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.spinner-sm { width: 16px; height: 16px; }
+.spinner-lg { width: 28px; height: 28px; }
+
+/* Live popup card (inside Leaflet Popup) */
+.live-popup {
+  padding: 14px;
+  border-radius: var(--r-lg);
+  min-width: 280px;
+}
+
+.live-popup__header {
+  margin-bottom: 10px;
+}
+
+.live-popup__badges {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.live-popup__coords-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.live-popup__subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Gauge + bars row */
+.live-popup__gauge-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.live-popup__gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.live-popup__gauge-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.live-popup__score-bars {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.live-popup__bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.live-popup__bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Rainfall grid */
+.live-popup__rain-section {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-bottom: 10px;
+}
+
+.live-popup__rain-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.live-popup__rain-grid {
+  display: flex;
+  gap: 8px;
+}
+
+.live-popup__rain-cell {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.live-popup__rain-mm {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: 'Space Grotesk', sans-serif;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.live-popup__rain-unit {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Actions row */
+.live-popup__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.live-popup__error-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--risk-critical);
+  margin-bottom: 6px;
+}
+
+.live-popup__error-body {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+

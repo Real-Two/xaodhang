@@ -7,9 +7,13 @@ const POLL_INTERVAL_MS = 60_000; // refresh risk data every 60s
 /**
  * useZones — fetches GET /risk/all on mount and polls every 60s.
  *
- * /risk/all returns all zones with real combined_score, risk_level,
- * structural_risk, and rainfall_risk already computed by risk_engine.py.
+ * /risk/all returns all 10 seeded zones with real combined_score, risk_level,
+ * structural_risk, rainfall_risk, and rainfall_mm_* already computed server-side.
  * No client-side enrichment needed.
+ *
+ * Field normalization:
+ *   /risk/all → { zone_id, zone_name, ... } — we alias zone_id as id so the
+ *   rest of the app (ZoneDrawer, markers, PriorityView) can use z.id everywhere.
  */
 export function useZones() {
   const { actions } = useApp();
@@ -22,7 +26,13 @@ export function useZones() {
       if (!alive) return;
 
       const raw = await getRiskAll();
-      const zones = Array.isArray(raw) ? raw : [];
+      const rawArr = Array.isArray(raw) ? raw : [];
+
+      // Normalize: /risk/all uses zone_id; the rest of the app uses id
+      const zones = rawArr.map(z => ({
+        ...z,
+        id: z.id ?? z.zone_id,
+      }));
 
       if (zones.length > 0) {
         console.log('[RedBeryl] GET /risk/all — first zone:', zones[0]);
@@ -31,6 +41,8 @@ export function useZones() {
             name: z.zone_name || z.name,
             level: z.risk_level,
             score: z.combined_score?.toFixed(3),
+            struct: z.structural_risk?.toFixed(3),
+            rain_mm: z.rainfall_mm_72h,
           }))
         );
       }

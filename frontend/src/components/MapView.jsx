@@ -30,10 +30,22 @@ const RISK_RADIUS = {
 };
 
 // ── Map click handler ─────────────────────────────────────────────────────────
-function MapClickHandler({ onMapClick }) {
+// Skip live-prediction when user clicks near a seeded zone marker — those
+// clicks already open the zone popup/drawer via EnhancedZoneMarker's own handler.
+const ZONE_SKIP_DEG = 0.008; // ≈0.8 km at NER latitudes
+
+function MapClickHandler({ onMapClick, zones }) {
   useMapEvents({
     click(e) {
-      onMapClick(e.latlng.lat, e.latlng.lng);
+      const { lat, lng } = e.latlng;
+      const hitZone = zones.some(z =>
+        z.lat != null && z.lon != null &&
+        Math.abs(z.lat - lat) < ZONE_SKIP_DEG &&
+        Math.abs(z.lon - lng) < ZONE_SKIP_DEG
+      );
+      if (!hitZone) {
+        onMapClick(lat, lng);
+      }
     },
   });
   return null;
@@ -307,8 +319,8 @@ export default function MapView({ mapRef }) {
           maxZoom={19}
         />
 
-        {/* Map Click Handler */}
-        <MapClickHandler onMapClick={handleMapClick} />
+        {/* Map Click Handler — skips clicks on existing zone markers */}
+        <MapClickHandler onMapClick={handleMapClick} zones={state.zones} />
 
         {/* Zone Markers */}
         <LayerGroup>
