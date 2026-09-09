@@ -1,16 +1,15 @@
 import { useEffect, useRef } from 'react';
-import { getZones, pingBackend } from '../api/client';
+import { getRiskAll, pingBackend } from '../api/client';
 import { useApp } from '../context/AppContext';
-import { enrichZone } from '../utils/riskUtils';
 
-const POLL_INTERVAL_MS = 60_000; // 60 seconds
+const POLL_INTERVAL_MS = 60_000; // refresh risk data every 60s
 
 /**
- * useZones — fetches /zones on mount and polls every 60s.
+ * useZones — fetches GET /risk/all on mount and polls every 60s.
  *
- * GET /zones returns raw structural_risk + rainfall fields but NOT
- * combined_score or risk_level. We compute those client-side using
- * the same formula as risk_engine.py (via enrichZone).
+ * /risk/all returns all zones with real combined_score, risk_level,
+ * structural_risk, and rainfall_risk already computed by risk_engine.py.
+ * No client-side enrichment needed.
  */
 export function useZones() {
   const { actions } = useApp();
@@ -22,31 +21,21 @@ export function useZones() {
       actions.setBackendStatus(alive);
       if (!alive) return;
 
-      const raw = await getZones();
+      const raw = await getRiskAll();
       const zones = Array.isArray(raw) ? raw : [];
 
-      // Log the first zone so field names are visible in the console
       if (zones.length > 0) {
-        console.log('[RedBeryl] GET /zones — first zone raw fields:', zones[0]);
+        console.log('[RedBeryl] GET /risk/all — first zone:', zones[0]);
+        console.log('[RedBeryl] Top 5 by risk:',
+          zones.slice(0, 5).map(z => ({
+            name: z.zone_name || z.name,
+            level: z.risk_level,
+            score: z.combined_score?.toFixed(3),
+          }))
+        );
       }
 
-      // Enrich each zone: compute combined_score + risk_level client-side
-      // if the backend didn't return them (or returned 0 / null).
-      const enriched = zones.map(enrichZone);
-
-      // Log a sorted summary so you can see the ordering immediately
-      const sorted = [...enriched].sort((a, b) => b.combined_score - a.combined_score);
-      console.log('[RedBeryl] Zones by risk (top 5):',
-        sorted.slice(0, 5).map(z => ({
-          name: z.zone_name || z.name,
-          level: z.risk_level,
-          score: z.combined_score?.toFixed(3),
-          structural: z.structural_risk?.toFixed(3),
-          computed: z._computed,
-        }))
-      );
-
-      actions.setZones(enriched);
+      actions.setZones(zones);
     } catch (err) {
       console.warn('[useZones] fetch error:', err);
       actions.setBackendStatus(false);

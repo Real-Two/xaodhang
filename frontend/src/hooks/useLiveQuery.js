@@ -2,11 +2,16 @@ import { useCallback, useEffect, useRef } from 'react';
 import { predictLive } from '../api/client';
 import { useApp } from '../context/AppContext';
 
-const TIMEOUT_MS = 45_000;
+// Railway backend GEE pipeline: 5–10s typical, 30s hard timeout
+const TIMEOUT_MS = 30_000;
 
 /**
- * useLiveQuery — handles the POST /predict/live interaction
- * Provides real-time multi-stage feedback during GEE pipeline execution.
+ * useLiveQuery — map click → GET /predict/live?lat=X&lon=Y → popup result.
+ *
+ * Stages (shown in progress banner):
+ *   0–4s:  satellite  — GEE fetching Sentinel-2 + JAXA elevation
+ *   4–8s:  model      — DeepLabv3+ inference on 128×128 patch
+ *   8s+:   rainfall   — CHIRPS 72h accumulation + combined score
  */
 export function useLiveQuery() {
   const { state, actions } = useApp();
@@ -22,6 +27,7 @@ export function useLiveQuery() {
   }, []);
 
   const queryPoint = useCallback(async (lat, lon) => {
+    // Cancel any in-flight query
     abortRef.current?.abort();
     clearInterval(timerRef.current);
     elapsedRef.current = 0;
@@ -39,13 +45,14 @@ export function useLiveQuery() {
       stage: 'satellite',
     });
 
-    // Multi-stage timer simulation for clear user transparency
+    // Realistic stage progression matching GEE pipeline timing (5–10s total)
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
       const el = elapsedRef.current;
+
       let stage = 'satellite';
-      if (el > 12) stage = 'rainfall';
-      else if (el > 4) stage = 'model';
+      if (el >= 8) stage = 'rainfall';
+      else if (el >= 4) stage = 'model';
 
       actions.setLiveQuery({ elapsed: el, stage });
     }, 1000);
@@ -53,35 +60,35 @@ export function useLiveQuery() {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
+      console.log(`[RedBeryl] GET /predict/live?lat=${lat}&lon=${lon}`);
       const result = await predictLive(lat, lon, controller.signal);
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
+      console.log('[RedBeryl] /predict/live response:', result);
+
       if (!result || typeof result !== 'object') {
-        throw new Error('Invalid response received from prediction pipeline.');
+        throw new Error('Invalid response from prediction pipeline.');
       }
 
       actions.setLiveQuery({ status: 'done', result, stage: 'done' });
-      // Auto-select the live zone so the Zone Drawer opens with full breakdown
-      actions.setSelectedZone({
-        ...result,
-        source: 'live',
-      });
+
+      // Auto-open Zone Drawer with full risk breakdown
+      actions.setSelectedZone({ ...result, source: 'live' });
+
     } catch (err) {
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
-      if (err.name === 'AbortError') {
-        actions.setLiveQuery({
-          status: 'error',
-          error: `Satellite pipeline timed out after ${TIMEOUT_MS / 1000}s. Please click to retry.`,
-        });
-      } else {
-        actions.setLiveQuery({
-          status: 'error',
-          error: err.message || 'Live prediction failed. Check connection.',
-        });
-      }
+      const timedOut = err.name === 'AbortError';
+      console.warn('[RedBeryl] /predict/live error:', err.message);
+
+      actions.setLiveQuery({
+        status: 'error',
+        error: timedOut
+          ? `GEE pipeline timed out after ${TIMEOUT_MS / 1000}s — click again to retry.`
+          : (err.message || 'Live prediction failed. Check backend connection.'),
+      });
     }
   }, [actions]);
 
