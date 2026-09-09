@@ -1,72 +1,68 @@
 """
-Entry point. Run locally with:
+main.py — Xaodhang API entry point.
 
+Run locally:
     uvicorn main:app --reload --port 8000
 
-Then open http://localhost:8000/docs for the interactive Swagger UI —
-that's also the fastest way to demo the API standalone before the frontend
-is wired up.
+Docs: http://localhost:8000/docs
 """
 
-from fastapi import FastAPI
+import datetime
+
+import database
+import models
+from database import Base, engine, get_db
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from risk_engine import compute_combined_risk, compute_rainfall_risk
+from routers import (alerts, chatbot, forecast, history, live, predict,
+                     rainfall, reports, zones)
 
-import models
-from database import Base, engine
-from routers import live, predict, rainfall, reports, zones, forecast, alerts, chatbot, history
-
+# Create all DB tables (including RiskHistory, AlertLog added in v0.3)
 Base.metadata.create_all(bind=engine)
 
-# ---------------------------------------------------------------------------
-# Auto-seed zones on startup if the DB is empty.
-# This means Railway's ephemeral SQLite is always populated after a redeploy.
-# ---------------------------------------------------------------------------
+NER_ZONES = [
+    {"name": "Noney, Manipur (2022 landslide site)",  "lat": 24.9833, "lon": 93.4833},
+    {"name": "Tupul, Manipur (railway landslide)",     "lat": 24.9500, "lon": 93.5000},
+    {"name": "Aizawl-Thenzawl Highway, Mizoram",      "lat": 23.5000, "lon": 92.8000},
+    {"name": "Shillong-Silchar NH6, Meghalaya",       "lat": 25.1000, "lon": 92.0000},
+    {"name": "Kohima-Imphal NH2, Nagaland",           "lat": 25.4000, "lon": 94.1000},
+    {"name": "Jiribam-Imphal Highway, Manipur",       "lat": 24.8000, "lon": 93.1200},
+    {"name": "Gangtok-Nathula, Sikkim",               "lat": 27.3300, "lon": 88.6200},
+    {"name": "Tawang Highway, Arunachal Pradesh",     "lat": 27.5800, "lon": 91.8600},
+    {"name": "Dima Hasao District, Assam",            "lat": 25.5700, "lon": 93.0500},
+    {"name": "Champhai, Mizoram (border zone)",       "lat": 23.4600, "lon": 93.3300},
+]
+
+
 def _auto_seed():
+    """Seed NER zones if the DB is empty — survives Railway redeploys."""
     from database import SessionLocal
-    from models import Zone
-
-    NER_ZONES = [
-        {"name": "Noney, Manipur (2022 landslide site)",   "lat": 24.9833, "lon": 93.4833},
-        {"name": "Tupul, Manipur (railway landslide)",      "lat": 24.9500, "lon": 93.5000},
-        {"name": "Aizawl-Thenzawl Highway, Mizoram",       "lat": 23.5000, "lon": 92.8000},
-        {"name": "Shillong-Silchar NH6, Meghalaya",        "lat": 25.1000, "lon": 92.0000},
-        {"name": "Kohima-Imphal NH2, Nagaland",            "lat": 25.4000, "lon": 94.1000},
-        {"name": "Jiribam-Imphal Highway, Manipur",        "lat": 24.8000, "lon": 93.1200},
-        {"name": "Gangtok-Nathula, Sikkim",                "lat": 27.3300, "lon": 88.6200},
-        {"name": "Tawang Highway, Arunachal Pradesh",      "lat": 27.5800, "lon": 91.8600},
-        {"name": "Dima Hasao District, Assam",             "lat": 25.5700, "lon": 93.0500},
-        {"name": "Champhai, Mizoram (border zone)",        "lat": 23.4600, "lon": 93.3300},
-    ]
-
     db = SessionLocal()
     try:
-        if db.query(Zone).count() == 0:
+        if db.query(models.Zone).count() == 0:
             for z in NER_ZONES:
-                db.add(Zone(**z))
+                db.add(models.Zone(**z))
             db.commit()
-            print(f"[SEED] Auto-seeded {len(NER_ZONES)} NER zones into fresh database.")
+            print(f"[SEED] Auto-seeded {len(NER_ZONES)} NER zones.")
         else:
-            print(f"[SEED] Database already has zones — skipping auto-seed.")
+            print("[SEED] Zones already present — skipping.")
     finally:
         db.close()
 
+
 _auto_seed()
 
+# ---------------------------------------------------------------------------
 app = FastAPI(
-    title="NER Landslide Early Warning API",
-    description="Combines satellite-based structural risk (U-Net) with "
-                 "rainfall-based dynamic risk and citizen field reports "
-                 "into a single early-warning system for SIH26001. "
-                 "Covers the 10 seeded historical zones, a slope-filtered "
-                 "grid across the wider Northeast region, and live "
-                 "on-demand prediction for any point via /predict/live.",
-    version="0.2.0",
+    title="Xaodhang — NER Landslide Early Warning API",
+    description="RedBeryl / SIH26001. Two-layer risk engine: DeepLabV3+ "
+                "structural risk + CHIRPS rainfall trigger. Covers 10 seeded "
+                "NER zones and any arbitrary coordinate via /predict/live.",
+    version="0.3.0",
 )
 
-# Wide-open CORS for hackathon development — antigravity's frontend will
-# likely run on a different port/origin during dev. Tighten this to the
-# actual deployed frontend origin before the live demo if possible.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -88,16 +84,123 @@ app.include_router(chatbot.router)
 app.include_router(history.router)
 
 
-@app.get("/")
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+@app.get("/", tags=["health"])
 def health_check():
     return {
         "status": "ok",
-        "service": "NER Landslide Early Warning API",
+        "service": "Xaodhang NER Landslide Early Warning API",
         "team": "RedBeryl",
         "version": "0.3.0",
         "features": [
             "structural-risk", "rainfall-trigger", "combined-risk-engine",
             "72h-forecast", "multilingual-sms-alerts", "ai-chatbot",
-            "risk-history", "citizen-reporting", "live-prediction"
-        ]
+            "risk-history", "citizen-reporting", "live-prediction",
+            "pipeline-run",
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Master pipeline endpoint
+# POST /pipeline/run — fetches rainfall + runs model + checks alerts for
+# all zones in one call. Frontend or a cron job hits this to keep data fresh.
+# ---------------------------------------------------------------------------
+@app.post("/pipeline/run", tags=["pipeline"])
+def run_pipeline(db=Depends(get_db)):
+    """
+    Full refresh for all zones:
+    1. Fetch CHIRPS rainfall from GEE
+    2. Run DeepLabV3+ inference (auto GEE patch fetch)
+    3. Log to RiskHistory
+    4. Fire SMS alerts on new HIGH/CRITICAL crossings
+    Returns a per-zone status summary.
+    """
+    from routers.alerts import (ALERT_THRESHOLD_LEVELS, DEFAULT_RECIPIENTS,
+                                _build_message, _get_last_alert_level,
+                                _send_fast2sms)
+    from routers.predict import _run_model_for_zone
+    from routers.rainfall import _do_gee_fetch
+
+    all_zones = db.query(models.Zone).all()
+    summary = []
+
+    for zone in all_zones:
+        entry = {
+            "zone_id": zone.id,
+            "zone_name": zone.name,
+            "rainfall": "skipped",
+            "model": "skipped",
+            "alert": "skipped",
+        }
+
+        # 1. Rainfall
+        try:
+            _do_gee_fetch(zone, db)
+            entry["rainfall"] = "ok"
+        except Exception as e:
+            entry["rainfall"] = f"error: {e}"
+
+        # 2. Model inference
+        try:
+            _run_model_for_zone(zone, db)
+            entry["model"] = "ok"
+        except Exception as e:
+            entry["model"] = f"error: {e}"
+
+        # 3. History log
+        rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
+        combined_score, risk_level = compute_combined_risk(
+            zone.structural_risk, rainfall_risk
+        )
+        try:
+            db.add(models.RiskHistory(
+                zone_id=zone.id,
+                structural_risk=zone.structural_risk,
+                rainfall_risk=rainfall_risk,
+                combined_score=combined_score,
+                risk_level=risk_level,
+                recorded_at=datetime.datetime.utcnow(),
+            ))
+            db.commit()
+        except Exception as e:
+            entry["history_error"] = str(e)
+
+        entry["combined_score"] = round(combined_score, 3)
+        entry["risk_level"] = risk_level
+
+        # 4. Alert
+        try:
+            if risk_level in ALERT_THRESHOLD_LEVELS:
+                last = _get_last_alert_level(zone.id, db)
+                if last != risk_level:
+                    recipients = [r for r in DEFAULT_RECIPIENTS.split(",") if r.strip()]
+                    for lang in ["en", "hi", "as", "mni"]:
+                        msg = _build_message(zone, risk_level, combined_score, lang)
+                        ok, err = _send_fast2sms(msg, recipients)
+                        db.add(models.AlertLog(
+                            zone_id=zone.id, risk_level=risk_level,
+                            combined_score=combined_score, channel="sms",
+                            language=lang, message=msg,
+                            recipients=",".join(recipients),
+                            status="sent" if ok else "failed",
+                            error=err or None,
+                        ))
+                    db.commit()
+                    entry["alert"] = f"fired ({risk_level})"
+                else:
+                    entry["alert"] = f"suppressed (already at {risk_level})"
+            else:
+                entry["alert"] = f"not needed ({risk_level})"
+        except Exception as e:
+            entry["alert"] = f"error: {e}"
+
+        summary.append(entry)
+
+    return {
+        "ran_at": datetime.datetime.utcnow().isoformat(),
+        "zones_processed": len(summary),
+        "zones": summary,
     }
