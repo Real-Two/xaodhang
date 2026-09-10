@@ -29,23 +29,14 @@ const RISK_RADIUS = {
   LOW: 8,
 };
 
-// ── Map click handler ─────────────────────────────────────────────────────────
-// Skip live-prediction when user clicks near a seeded zone marker — those
-// clicks already open the zone popup/drawer via EnhancedZoneMarker's own handler.
-const ZONE_SKIP_DEG = 0.008; // ≈0.8 km at NER latitudes
-
-function MapClickHandler({ onMapClick, zones }) {
+// ── Map click handler ────────────────────────────────────────────────────────
+// Fires for every click on the map background (NOT on markers — those call
+// L.DomEvent.stopPropagation to prevent bubbling to this handler).
+function MapClickHandler({ onMapClick }) {
   useMapEvents({
     click(e) {
-      const { lat, lng } = e.latlng;
-      const hitZone = zones.some(z =>
-        z.lat != null && z.lon != null &&
-        Math.abs(z.lat - lat) < ZONE_SKIP_DEG &&
-        Math.abs(z.lon - lng) < ZONE_SKIP_DEG
-      );
-      if (!hitZone) {
-        onMapClick(lat, lng);
-      }
+      // e.latlng is the exact projected coordinate of the user's click
+      onMapClick(e.latlng.lat, e.latlng.lng);
     },
   });
   return null;
@@ -90,7 +81,10 @@ function EnhancedZoneMarker({ zone, onSelect }) {
           opacity: 1,
         }}
         eventHandlers={{
-          click: () => {
+          click: (e) => {
+            // Stop this click from bubbling up to the map and triggering a
+            // live prediction on top of the zone-selection drawer open.
+            L.DomEvent.stopPropagation(e);
             onSelect(zone);
             map.setView([zone.lat, zone.lon], Math.max(map.getZoom(), 10), { animate: true });
           },
@@ -319,8 +313,8 @@ export default function MapView({ mapRef }) {
           maxZoom={19}
         />
 
-        {/* Map Click Handler — skips clicks on existing zone markers */}
-        <MapClickHandler onMapClick={handleMapClick} zones={state.zones} />
+        {/* Map Click Handler — fires for blank map area clicks only */}
+        <MapClickHandler onMapClick={handleMapClick} />
 
         {/* Zone Markers */}
         <LayerGroup>

@@ -2,19 +2,26 @@ import { useCallback, useEffect, useRef } from 'react';
 import { predictLive } from '../api/client';
 import { useApp } from '../context/AppContext';
 
-// Railway backend GEE pipeline: 5–10s typical, 30s hard timeout
+// Railway GEE pipeline: typically 5–10s, 30s hard cap
 const TIMEOUT_MS = 30_000;
 
 /**
- * useLiveQuery — map click → GET /predict/live?lat=X&lon=Y → popup result.
+ * useLiveQuery — map click → GET /predict/live?lat=X&lon=Y → ZoneDrawer panel.
  *
- * Stages (shown in progress banner):
- *   0–4s:  satellite  — GEE fetching Sentinel-2 + JAXA elevation
- *   4–8s:  model      — DeepLabv3+ inference on 128×128 patch
- *   8s+:   rainfall   — CHIRPS 72h accumulation + combined score
+ * On click:
+ *   1. Immediately open ZoneDrawer with _loading: true so user sees "Fetching..."
+ *   2. Place spinner marker on map at exact clicked coordinate
+ *   3. On API success: update selectedZone with full result → drawer updates in-place
+ *   4. On error: update selectedZone with _error state, keep marker for retry
+ *
+ * Stage labels (shown in drawer and progress banner):
+ *   0–4s:  satellite  — GEE Sentinel-2 + JAXA AW3D30
+ *   4–8s:  model      — DeepLabv3+ inference
+ *   8s+:   rainfall   — CHIRPS 72h accumulation
  */
 export function useLiveQuery() {
   const { state, actions } = useApp();
+  const { mergeSelectedZone } = actions;
   const abortRef = useRef(null);
   const timerRef = useRef(null);
   const elapsedRef = useRef(0);
@@ -27,7 +34,7 @@ export function useLiveQuery() {
   }, []);
 
   const queryPoint = useCallback(async (lat, lon) => {
-    // Cancel any in-flight query
+    // Cancel any previous in-flight request
     abortRef.current?.abort();
     clearInterval(timerRef.current);
     elapsedRef.current = 0;
@@ -35,9 +42,10 @@ export function useLiveQuery() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // ── Step 1: Set live query state (drives map pin) ─────────────────────────
     actions.setLiveQuery({
       status: 'loading',
-      lat,
+      lat,           // exact clicked coordinate — used for pin position
       lon,
       result: null,
       error: null,
@@ -45,7 +53,19 @@ export function useLiveQuery() {
       stage: 'satellite',
     });
 
-    // Realistic stage progression matching GEE pipeline timing (5–10s total)
+    // ── Step 2: Immediately open ZoneDrawer with loading placeholder ──────────
+    // This is what the user sees in the side panel while GEE runs.
+    actions.setSelectedZone({
+      source: 'live',
+      _loading: true,
+      lat,
+      lon,
+      // Coordinates as title — same pattern as the result drawer
+      zone_name: `${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`,
+      _subtitle: 'Fetching satellite data for this location...',
+    });
+
+    // ── Step 3: Elapsed timer with stage labels ───────────────────────────────
     timerRef.current = setInterval(() => {
       elapsedRef.current += 1;
       const el = elapsedRef.current;
@@ -55,6 +75,14 @@ export function useLiveQuery() {
       else if (el >= 4) stage = 'model';
 
       actions.setLiveQuery({ elapsed: el, stage });
+      // Partial update to side-panel subtitle — mergeSelectedZone so we don't
+      // clobber the full zone object set during the initial loading placeholder.
+      const subtitles = {
+        satellite: 'Fetching Sentinel-2 (10m) & JAXA AW3D30 elevation data...',
+        model:     'Running DeepLabv3+ terrain segmentation...',
+        rainfall:  'Querying CHIRPS 72h precipitation accumulation...',
+      };
+      mergeSelectedZone({ _subtitle: subtitles[stage], elapsed: el });
     }, 1000);
 
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -71,23 +99,54 @@ export function useLiveQuery() {
         throw new Error('Invalid response from prediction pipeline.');
       }
 
+      // ── Step 4: Mark query done (drives pin change to teardrop) ──────────────
       actions.setLiveQuery({ status: 'done', result, stage: 'done' });
 
-      // Auto-open Zone Drawer with full risk breakdown
-      actions.setSelectedZone({ ...result, source: 'live' });
+      // ── Step 5: Update ZoneDrawer in-place with full result data ─────────────
+      // Use clicked lat/lon for the title (API may return snapped coords)
+      actions.setSelectedZone({
+        source: 'live',
+        _loading: false,
+        _error: null,
+        // Use clicked coordinates for the title, not API-returned snapped coords
+        lat,
+        lon,
+        zone_name: `${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`,
+        _subtitle: 'Live Prediction · Northeast Region',
+        // All risk fields from API
+        structural_risk:  result.structural_risk,
+        rainfall_risk:    result.rainfall_risk,
+        combined_score:   result.combined_score,
+        risk_level:       result.risk_level,
+        // Real rainfall accumulation mm values
+        rainfall_mm_24h:  result.rainfall_mm_24h,
+        rainfall_mm_48h:  result.rainfall_mm_48h,
+        rainfall_mm_72h:  result.rainfall_mm_72h,
+        // Heatmap
+        mask_png_base64:  result.mask_png_base64,
+        cached:           result.cached,
+      });
 
     } catch (err) {
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
       const timedOut = err.name === 'AbortError';
+      const errorMsg = timedOut
+        ? `GEE pipeline timed out after ${TIMEOUT_MS / 1000}s — click again to retry.`
+        : (err.message || 'Live prediction failed. Check backend connection.');
+
       console.warn('[RedBeryl] /predict/live error:', err.message);
 
-      actions.setLiveQuery({
-        status: 'error',
-        error: timedOut
-          ? `GEE pipeline timed out after ${TIMEOUT_MS / 1000}s — click again to retry.`
-          : (err.message || 'Live prediction failed. Check backend connection.'),
+      actions.setLiveQuery({ status: 'error', error: errorMsg });
+      // Update side panel with error state
+      actions.setSelectedZone({
+        source: 'live',
+        _loading: false,
+        _error: errorMsg,
+        lat,
+        lon,
+        zone_name: `${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`,
       });
     }
   }, [actions]);
@@ -96,6 +155,7 @@ export function useLiveQuery() {
     abortRef.current?.abort();
     clearInterval(timerRef.current);
     actions.resetLiveQuery();
+    actions.clearSelectedZone();
   }, [actions]);
 
   return {

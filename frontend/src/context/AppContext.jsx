@@ -62,6 +62,12 @@ function reducer(state, action) {
     case 'SET_SELECTED_ZONE':
       return { ...state, selectedZone: action.payload };
 
+    case 'MERGE_SELECTED_ZONE':
+      // Merges partial fields into the existing selectedZone (used by live query
+      // interval ticker to update subtitle/elapsed without full replacement)
+      if (!state.selectedZone) return state;
+      return { ...state, selectedZone: { ...state.selectedZone, ...action.payload } };
+
     case 'CLEAR_SELECTED_ZONE':
       return { ...state, selectedZone: null };
 
@@ -144,6 +150,7 @@ export function AppProvider({ children }) {
     setSearchQuery: useCallback(q => dispatch({ type: 'SET_SEARCH_QUERY', payload: q }), []),
     setFilterLevel: useCallback(lvl => dispatch({ type: 'SET_FILTER_LEVEL', payload: lvl }), []),
     setSelectedZone: useCallback(z => dispatch({ type: 'SET_SELECTED_ZONE', payload: z }), []),
+    mergeSelectedZone: useCallback(p => dispatch({ type: 'MERGE_SELECTED_ZONE', payload: p }), []),
     clearSelectedZone: useCallback(() => dispatch({ type: 'CLEAR_SELECTED_ZONE' }), []),
     openModal: useCallback(m => dispatch({ type: 'OPEN_MODAL', payload: m }), []),
     closeModal: useCallback(() => dispatch({ type: 'CLOSE_MODAL' }), []),
