@@ -88,7 +88,7 @@ export function useLiveQuery() {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      console.log(`[RedBeryl] POST /predict/live {lat:${lat}, lon:${lon}}`);
+      console.log(`[RedBeryl] GET /predict/live?lat=${lat}&lon=${lon}`);
       const result = await predictLive(lat, lon, controller.signal);
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
