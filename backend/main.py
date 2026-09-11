@@ -8,6 +8,7 @@ Docs: http://localhost:8000/docs
 """
 
 import datetime
+import threading
 
 import database
 import models
@@ -19,7 +20,7 @@ from risk_engine import compute_combined_risk, compute_rainfall_risk
 from routers import (alerts, chatbot, forecast, history, live, predict,
                      rainfall, reports, zones)
 
-# Create all DB tables (including RiskHistory, AlertLog added in v0.3)
+# Create all DB tables
 Base.metadata.create_all(bind=engine)
 
 NER_ZONES = [
@@ -37,7 +38,7 @@ NER_ZONES = [
 
 
 def _auto_seed():
-    """Seed NER zones if the DB is empty — survives Railway redeploys."""
+    """Seed NER zones if DB is empty — survives Railway redeploys."""
     from database import SessionLocal
     db = SessionLocal()
     try:
@@ -52,15 +53,74 @@ def _auto_seed():
         db.close()
 
 
+def _startup_pipeline():
+    """
+    Runs in a background thread 5s after startup.
+    Fetches rainfall + structural risk for any zones with blank data.
+    This means every Railway redeploy self-heals automatically —
+    no manual /pipeline/run needed.
+    """
+    def _run():
+        import time
+        time.sleep(5)
+
+        from database import SessionLocal
+        from routers.predict import _run_model_for_zone
+        from routers.rainfall import _do_gee_fetch
+
+        db = SessionLocal()
+        try:
+            blank = [z for z in db.query(models.Zone).all()
+                     if z.structural_risk == 0.0]
+            if not blank:
+                print("[STARTUP] All zones populated — skipping auto-pipeline.")
+                return
+
+            print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
+            for zone in blank:
+                try:
+                    _do_gee_fetch(zone, db)
+                except Exception as e:
+                    print(f"[STARTUP] Rainfall error {zone.name}: {e}")
+                try:
+                    _run_model_for_zone(zone, db)
+                except Exception as e:
+                    print(f"[STARTUP] Model error {zone.name}: {e}")
+
+                rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
+                combined_score, risk_level = compute_combined_risk(
+                    zone.structural_risk, rainfall_risk)
+
+                db.add(models.RiskHistory(
+                    zone_id=zone.id,
+                    structural_risk=zone.structural_risk,
+                    rainfall_risk=rainfall_risk,
+                    combined_score=combined_score,
+                    risk_level=risk_level,
+                    recorded_at=datetime.datetime.utcnow(),
+                ))
+                db.commit()
+                print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
+
+            print("[STARTUP] Auto-pipeline complete.")
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 _auto_seed()
+_startup_pipeline()
 
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="Xaodhang — NER Landslide Early Warning API",
-    description="RedBeryl / SIH26001. Two-layer risk engine: DeepLabV3+ "
-                "structural risk + CHIRPS rainfall trigger. Covers 10 seeded "
-                "NER zones and any arbitrary coordinate via /predict/live.",
-    version="0.3.0",
+    description=(
+        "RedBeryl / SIH26001. Two-layer risk engine: DeepLabV3+ structural "
+        "risk + CHIRPS rainfall trigger. Covers 10 seeded NER zones and any "
+        "arbitrary coordinate via /predict/live."
+    ),
+    version="0.3.1",
 )
 
 app.add_middleware(
@@ -84,39 +144,30 @@ app.include_router(chatbot.router)
 app.include_router(history.router)
 
 
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
 @app.get("/", tags=["health"])
 def health_check():
     return {
         "status": "ok",
         "service": "Xaodhang NER Landslide Early Warning API",
         "team": "RedBeryl",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "features": [
             "structural-risk", "rainfall-trigger", "combined-risk-engine",
             "72h-forecast", "multilingual-sms-alerts", "ai-chatbot",
             "risk-history", "citizen-reporting", "live-prediction",
-            "pipeline-run",
+            "pipeline-run", "auto-startup-pipeline",
         ],
     }
 
 
-# ---------------------------------------------------------------------------
-# Master pipeline endpoint
-# POST /pipeline/run — fetches rainfall + runs model + checks alerts for
-# all zones in one call. Frontend or a cron job hits this to keep data fresh.
-# ---------------------------------------------------------------------------
 @app.post("/pipeline/run", tags=["pipeline"])
 def run_pipeline(db=Depends(get_db)):
     """
     Full refresh for all zones:
     1. Fetch CHIRPS rainfall from GEE
-    2. Run DeepLabV3+ inference (auto GEE patch fetch)
+    2. Run DeepLabV3+ inference
     3. Log to RiskHistory
     4. Fire SMS alerts on new HIGH/CRITICAL crossings
-    Returns a per-zone status summary.
     """
     from routers.alerts import (ALERT_THRESHOLD_LEVELS, DEFAULT_RECIPIENTS,
                                 _build_message, _get_last_alert_level,
@@ -136,25 +187,22 @@ def run_pipeline(db=Depends(get_db)):
             "alert": "skipped",
         }
 
-        # 1. Rainfall
         try:
             _do_gee_fetch(zone, db)
             entry["rainfall"] = "ok"
         except Exception as e:
             entry["rainfall"] = f"error: {e}"
 
-        # 2. Model inference
         try:
             _run_model_for_zone(zone, db)
             entry["model"] = "ok"
         except Exception as e:
             entry["model"] = f"error: {e}"
 
-        # 3. History log
         rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
         combined_score, risk_level = compute_combined_risk(
-            zone.structural_risk, rainfall_risk
-        )
+            zone.structural_risk, rainfall_risk)
+
         try:
             db.add(models.RiskHistory(
                 zone_id=zone.id,
@@ -171,12 +219,12 @@ def run_pipeline(db=Depends(get_db)):
         entry["combined_score"] = round(combined_score, 3)
         entry["risk_level"] = risk_level
 
-        # 4. Alert
         try:
             if risk_level in ALERT_THRESHOLD_LEVELS:
                 last = _get_last_alert_level(zone.id, db)
                 if last != risk_level:
-                    recipients = [r for r in DEFAULT_RECIPIENTS.split(",") if r.strip()]
+                    recipients = [r for r in DEFAULT_RECIPIENTS.split(",")
+                                  if r.strip()]
                     for lang in ["en", "hi", "as", "mni"]:
                         msg = _build_message(zone, risk_level, combined_score, lang)
                         ok, err = _send_fast2sms(msg, recipients)

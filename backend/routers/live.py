@@ -50,6 +50,9 @@ class LiveRiskOut(BaseModel):
     lon: float
     structural_risk: float
     rainfall_risk: float
+    rainfall_mm_24h: float
+    rainfall_mm_48h: float
+    rainfall_mm_72h: float
     combined_score: float
     risk_level: str
     mask_png_base64: str | None = None
@@ -125,8 +128,23 @@ def predict_live(
         lon=zone.lon,
         structural_risk=zone.structural_risk,
         rainfall_risk=rainfall_risk,
+        rainfall_mm_24h=zone.rainfall_mm_24h or 0.0,
+        rainfall_mm_48h=zone.rainfall_mm_48h or 0.0,
+        rainfall_mm_72h=zone.rainfall_mm_72h or 0.0,
         combined_score=combined_score,
         risk_level=risk_level,
         mask_png_base64=mask_png_base64,
         cached=cached,
     )
+
+
+@router.get("/live", response_model=LiveRiskOut)
+def predict_live_get(
+    lat: float,
+    lon: float,
+    name: str = None,
+    db: Session = Depends(get_db),
+    model: StructuralRiskModel = Depends(get_model),
+):
+    """GET version of /predict/live for easy browser/frontend use."""
+    return predict_live(LiveQuery(lat=lat, lon=lon, name=name), db, model)
