@@ -88,7 +88,7 @@ export function useLiveQuery() {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      console.log(`[RedBeryl] GET /predict/live?lat=${lat}&lon=${lon}`);
+      console.log(`[RedBeryl] POST /predict/live {lat:${lat}, lon:${lon}}`);
       const result = await predictLive(lat, lon, controller.signal);
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
@@ -103,29 +103,30 @@ export function useLiveQuery() {
       actions.setLiveQuery({ status: 'done', result, stage: 'done' });
 
       // ── Step 5: Update ZoneDrawer in-place with full result data ─────────────
-      // Use clicked lat/lon for the title (API may return snapped coords)
+      // Use clicked lat/lon for the title (API returns snapped coords in result.lat/lon)
+      // LiveRiskOut does NOT include rainfall_mm_* — those are zone-specific from /risk/all
       actions.setSelectedZone({
         source: 'live',
         _loading: false,
         _error: null,
-        // Use clicked coordinates for the title, not API-returned snapped coords
         lat,
         lon,
         zone_name: `${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`,
         _subtitle: 'Live Prediction · Northeast Region',
-        // All risk fields from API
+        // Risk fields from API (LiveRiskOut)
         structural_risk:  result.structural_risk,
         rainfall_risk:    result.rainfall_risk,
         combined_score:   result.combined_score,
         risk_level:       result.risk_level,
-        // Real rainfall accumulation mm values
-        rainfall_mm_24h:  result.rainfall_mm_24h,
-        rainfall_mm_48h:  result.rainfall_mm_48h,
-        rainfall_mm_72h:  result.rainfall_mm_72h,
-        // Heatmap
-        mask_png_base64:  result.mask_png_base64,
+        // rainfall_mm_* not in LiveRiskOut — drawer will show — for these
+        rainfall_mm_24h:  result.rainfall_mm_24h  ?? null,
+        rainfall_mm_48h:  result.rainfall_mm_48h  ?? null,
+        rainfall_mm_72h:  result.rainfall_mm_72h  ?? null,
+        // Heatmap (may be null)
+        mask_png_base64:  result.mask_png_base64 ?? null,
         cached:           result.cached,
       });
+
 
     } catch (err) {
       clearTimeout(timeoutId);

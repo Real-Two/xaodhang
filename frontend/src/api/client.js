@@ -106,17 +106,22 @@ export async function getHistory(id) {
 // ── Live Prediction (Map Click) ───────────────────────────────────────────────
 
 /**
- * GET /predict/live?lat={lat}&lon={lon}
+ * POST /predict/live
  * On-demand risk prediction for any arbitrary coordinate.
  * GEE satellite fetch + DeepLabv3+ model + CHIRPS rainfall — takes 5–10s.
  *
- * Response shape:
+ * Request body: { lat: number, lon: number }
+ * Response (LiveRiskOut):
  *   { zone_id, zone_name, lat, lon, structural_risk, rainfall_risk,
  *     combined_score, risk_level, mask_png_base64, cached, source }
+ *
+ * Note: rainfall_mm_24h/48h/72h are NOT returned by /predict/live.
+ * They come from /risk/all (seeded zones only).
  */
 export async function predictLive(lat, lon, signal) {
-  return request('GET', `/predict/live?lat=${lat}&lon=${lon}`, { signal });
+  return request('POST', '/predict/live', { body: { lat, lon }, signal });
 }
+
 
 // ── Structural Prediction ─────────────────────────────────────────────────────
 
