@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from routers import (alerts, chatbot, forecast, history, live, predict,
-                     rainfall, reports, zones)
+                     rainfall, reports, zones, scan)
 
 # Create all DB tables
 Base.metadata.create_all(bind=engine)
@@ -120,7 +120,7 @@ app = FastAPI(
         "risk + CHIRPS rainfall trigger. Covers 10 seeded NER zones and any "
         "arbitrary coordinate via /predict/live."
     ),
-    version="0.3.1",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -142,6 +142,7 @@ app.include_router(forecast.router)
 app.include_router(alerts.router)
 app.include_router(chatbot.router)
 app.include_router(history.router)
+app.include_router(scan.router)
 
 
 @app.get("/", tags=["health"])
@@ -150,12 +151,13 @@ def health_check():
         "status": "ok",
         "service": "Xaodhang NER Landslide Early Warning API",
         "team": "RedBeryl",
-        "version": "0.3.1",
+        "version": "0.4.0",
         "features": [
             "structural-risk", "rainfall-trigger", "combined-risk-engine",
             "72h-forecast", "multilingual-sms-alerts", "ai-chatbot",
             "risk-history", "citizen-reporting", "live-prediction",
             "pipeline-run", "auto-startup-pipeline",
+            "ner-regional-scan",   # NEW
         ],
     }
 

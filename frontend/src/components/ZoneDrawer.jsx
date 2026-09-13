@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { RISK_META, normalizeRiskLevel } from './RiskCard';
 import { useLiveQuery } from '../hooks/useLiveQuery';
+import RiskTrendChart from './RiskTrendChart';
 
 /**
  * ZoneDrawer — Deep-dive side panel for any selected zone or live query point.
@@ -159,6 +160,11 @@ export default function ZoneDrawer() {
   const structResult = zone.id ? state.structuralResults[zone.id] : null;
   const maskBase64   = zone.mask_png_base64 || structResult?.mask_png_base64;
 
+  // zone_id for history API — seeded zones use zone.id, live queries use zone.zone_id
+  const zoneIdForHistory = zone.id ?? zone.zone_id ?? null;
+  // Only show trend chart for zones that exist in DB (have an integer id)
+  const showTrendChart = !isLive || (zone.zone_id && typeof zone.zone_id === 'number');
+
   const nearbyReports = state.reports.filter(r => {
     if (!r.lat || !r.lon || !zone.lat || !zone.lon) return false;
     return Math.abs(r.lat - zone.lat) < 0.15 && Math.abs(r.lon - zone.lon) < 0.15;
@@ -248,7 +254,7 @@ export default function ZoneDrawer() {
                   }} />
               </div>
               <p className="zone-drawer__signal-notes">
-                <strong>DeepLabv3+ Model:</strong> 10m Sentinel-2 multi-spectral + JAXA AW3D30 slope, aspect &amp; elevation.
+                <strong>UNet Model:</strong> 10m Sentinel-2 multi-spectral + JAXA AW3D30 slope, aspect &amp; elevation.
               </p>
             </div>
 
@@ -293,6 +299,20 @@ export default function ZoneDrawer() {
             <RainRow label="48h Cumulative"   val={rain48} maxMm={120} color="var(--brand-orange)" />
             <RainRow label="72h Cumulative"   val={rain72} maxMm={150} color={meta.color} bold />
           </div>
+
+          {/* ── Risk Trend Chart ─────────────────────────────────────────────── */}
+          {showTrendChart && zoneIdForHistory && (
+            <>
+              <div className="zone-drawer__section-title" style={{ marginTop: 'var(--sp-4)' }}>
+                <span>Historical Risk Trend</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Last 7 days</span>
+              </div>
+              <RiskTrendChart
+                zoneId={zoneIdForHistory}
+                zoneName={displayName}
+              />
+            </>
+          )}
 
           {/* AI Heatmap */}
           {maskBase64 && (

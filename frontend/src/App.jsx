@@ -8,6 +8,7 @@ import HeaderBar from './components/HeaderBar';
 import MapView from './components/MapView';
 import PriorityView from './components/PriorityView';
 import ReportsView from './components/ReportsView';
+import ScanView from './components/ScanView';
 import ZoneDrawer from './components/ZoneDrawer';
 import AlertsDrawer from './components/AlertsDrawer';
 import AboutPanel from './components/AboutPanel';
@@ -24,8 +25,15 @@ function DashboardShell() {
   useReports();
 
   const handleLocateOnMap = (item) => {
-    if (item.lat != null && item.lon != null && mapRef.current) {
-      mapRef.current.setView([item.lat, item.lon], 11, { animate: true });
+    // Switch to map view and fly to location
+    if (item.lat != null && item.lon != null) {
+      actions.setView('map');
+      // Small delay so MapView has time to mount/rehydrate before flyTo
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.setView([item.lat, item.lon], 11, { animate: true });
+        }
+      }, 80);
     }
   };
 
@@ -54,6 +62,10 @@ function DashboardShell() {
 
           {state.currentView === 'reports' && (
             <ReportsView onLocateReport={handleLocateOnMap} />
+          )}
+
+          {state.currentView === 'scan' && (
+            <ScanView onLocateOnMap={handleLocateOnMap} />
           )}
         </div>
       </div>
