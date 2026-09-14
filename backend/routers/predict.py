@@ -21,6 +21,8 @@ import schemas
 from database import get_db
 from ml_service import StructuralRiskModel
 from risk_engine import compute_combined_risk, compute_rainfall_risk
+from seismic import get_seismic_context
+from zone_impact import get_zone_impact
 
 GEE_PROJECT = os.environ.get("GEE_PROJECT", "xhaodong-506519")
 
@@ -32,7 +34,6 @@ except ImportError:
 
 router = APIRouter(tags=["prediction"])
 
-# Load ONNX model once at startup — shared across all requests
 _model: StructuralRiskModel | None = None
 
 
@@ -44,16 +45,11 @@ def get_model() -> StructuralRiskModel:
 
 
 def _run_model_for_zone(zone: models.Zone, db: Session) -> schemas.PredictOut:
-    """
-    Core logic: fetch Sentinel-2 + terrain patch from GEE for a zone,
-    run ONNX inference, store structural_risk, return result.
-    """
     if not _GEE_AVAILABLE:
         raise HTTPException(
             status_code=503,
             detail="earthengine-api not installed — cannot auto-fetch patches."
         )
-
     try:
         from gee_auth import initialize_gee
         initialize_gee(GEE_PROJECT)
@@ -76,17 +72,8 @@ def _run_model_for_zone(zone: models.Zone, db: Session) -> schemas.PredictOut:
     )
 
 
-# ---------------------------------------------------------------------------
-# Auto endpoints (GEE-powered, no file upload needed)
-# ---------------------------------------------------------------------------
-
 @router.post("/predict/auto-all")
 def predict_all_zones(db: Session = Depends(get_db)):
-    """
-    Runs GEE fetch + model inference for every zone.
-    Call once after seeding to populate structural_risk across all zones.
-    Then update_all_zones.py keeps it fresh on a schedule.
-    """
     zones = db.query(models.Zone).all()
     results = []
     for zone in zones:
@@ -111,27 +98,15 @@ def predict_all_zones(db: Session = Depends(get_db)):
 
 @router.post("/predict/auto/{zone_id}", response_model=schemas.PredictOut)
 def predict_zone_auto(zone_id: int, db: Session = Depends(get_db)):
-    """
-    Auto-fetches the Sentinel-2 + terrain patch from GEE for a zone
-    and runs ONNX inference. No file upload needed.
-    """
     zone = db.query(models.Zone).filter(models.Zone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
     return _run_model_for_zone(zone, db)
 
 
-# ---------------------------------------------------------------------------
-# Manual upload fallback (for local testing without GEE)
-# ---------------------------------------------------------------------------
-
 @router.post("/predict/structural/{zone_id}", response_model=schemas.PredictOut)
 async def predict_structural(zone_id: int, file: UploadFile = File(...),
                               db: Session = Depends(get_db)):
-    """
-    Manual fallback: upload a .npy or .h5 patch (14-band, 128x128).
-    Use /predict/auto/{zone_id} in production — this is for local testing.
-    """
     zone = db.query(models.Zone).filter(models.Zone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
@@ -168,55 +143,94 @@ async def predict_structural(zone_id: int, file: UploadFile = File(...),
     )
 
 
-# ---------------------------------------------------------------------------
-# Risk endpoints
-# ---------------------------------------------------------------------------
+# ── Risk endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/risk/all")
 def get_all_risk(db: Session = Depends(get_db)):
     """
     Combined risk for every zone, sorted highest-first.
-    This is the main feed for the dashboard priority list.
+    Now includes seismic context and impact metadata.
+
+    Seismic is fetched once per call (cached 30min in seismic.py) and
+    applied per-zone based on distance. Impact data is static lookup.
     """
     zones = db.query(models.Zone).all()
     results = []
+
     for zone in zones:
+        # Seismic context — per-zone (distance varies)
+        seismic = get_seismic_context(zone.lat, zone.lon)
+
         rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-        combined_score, level = compute_combined_risk(zone.structural_risk, rainfall_risk)
+        combined_score, level = compute_combined_risk(
+            zone.structural_risk,
+            rainfall_risk,
+            seismic_uplift=seismic["seismic_uplift"],
+        )
+
+        # Impact metadata
+        impact = get_zone_impact(zone.name)
+
         results.append({
-            "zone_id": zone.id,
-            "zone_name": zone.name,
-            "lat": zone.lat,
-            "lon": zone.lon,
+            "zone_id":    zone.id,
+            "zone_name":  zone.name,
+            "lat":        zone.lat,
+            "lon":        zone.lon,
             "structural_risk": zone.structural_risk,
-            "rainfall_risk": rainfall_risk,
+            "rainfall_risk":   rainfall_risk,
             "rainfall_mm_72h": zone.rainfall_mm_72h,
-            "combined_score": round(combined_score, 3),
-            "risk_level": level,
+            "combined_score":  round(combined_score, 3),
+            "risk_level":      level,
+            # Seismic
+            "seismic_uplift":  seismic["seismic_uplift"],
+            "seismic_note":    seismic["seismic_note"],
+            "seismic_events_72h": seismic["events_72h"],
+            "nearest_seismic_event": seismic["nearest_event"],
+            # Impact
+            "population_5km":  impact["population_5km"],
+            "critical_infra":  impact["critical_infra"],
+            "recovery_note":   impact["recovery_note"],
+            "impact_score":    impact["impact_score"],
+            # Timestamps
             "structural_updated_at": zone.structural_updated_at.isoformat()
                 if zone.structural_updated_at else None,
             "rainfall_updated_at": zone.rainfall_updated_at.isoformat()
                 if zone.rainfall_updated_at else None,
         })
+
     results.sort(key=lambda x: x["combined_score"], reverse=True)
     return results
 
 
-@router.get("/risk/{zone_id}", response_model=schemas.RiskOut)
+@router.get("/risk/{zone_id}")
 def get_combined_risk(zone_id: int, db: Session = Depends(get_db)):
-    """Combined risk score + level for one zone."""
+    """Combined risk score + seismic + impact for one zone."""
     zone = db.query(models.Zone).filter(models.Zone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
 
+    seismic = get_seismic_context(zone.lat, zone.lon)
     rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-    combined_score, level = compute_combined_risk(zone.structural_risk, rainfall_risk)
-
-    return schemas.RiskOut(
-        zone_id=zone.id,
-        zone_name=zone.name,
-        structural_risk=zone.structural_risk,
-        rainfall_risk=rainfall_risk,
-        combined_score=combined_score,
-        risk_level=level,
+    combined_score, level = compute_combined_risk(
+        zone.structural_risk,
+        rainfall_risk,
+        seismic_uplift=seismic["seismic_uplift"],
     )
+    impact = get_zone_impact(zone.name)
+
+    return {
+        "zone_id":    zone.id,
+        "zone_name":  zone.name,
+        "structural_risk": zone.structural_risk,
+        "rainfall_risk":   rainfall_risk,
+        "combined_score":  round(combined_score, 3),
+        "risk_level":      level,
+        "seismic_uplift":  seismic["seismic_uplift"],
+        "seismic_note":    seismic["seismic_note"],
+        "seismic_events_72h": seismic["events_72h"],
+        "nearest_seismic_event": seismic["nearest_event"],
+        "population_5km":  impact["population_5km"],
+        "critical_infra":  impact["critical_infra"],
+        "recovery_note":   impact["recovery_note"],
+        "impact_score":    impact["impact_score"],
+    }
