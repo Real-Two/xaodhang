@@ -42,19 +42,15 @@ function DashboardShell() {
       <div className="app-main">
         <HeaderBar />
         <div className="app-content">
-          {state.currentView === 'map' && <MapView mapRef={mapRef} />}
+          {state.currentView === 'map'      && <MapView mapRef={mapRef} />}
           {state.currentView === 'priority' && (
             <PriorityView
               onInspectZone={z => actions.setSelectedZone(z)}
               onLocateOnMap={handleLocateOnMap}
             />
           )}
-          {state.currentView === 'reports' && (
-            <ReportsView onLocateReport={handleLocateOnMap} />
-          )}
-          {state.currentView === 'scan' && (
-            <ScanView onLocateOnMap={handleLocateOnMap} />
-          )}
+          {state.currentView === 'reports'  && <ReportsView onLocateReport={handleLocateOnMap} />}
+          {state.currentView === 'scan'     && <ScanView onLocateOnMap={handleLocateOnMap} />}
         </div>
       </div>
 
@@ -63,24 +59,33 @@ function DashboardShell() {
       <AboutPanel />
       <ReportForm />
 
-      {/* Chatbot — slide in from right */}
+      {/* Chatbot panel — rendered in a portal-like fixed layer above everything */}
       {chatOpen && <ChatbotPanel onClose={() => setChatOpen(false)} />}
 
-      {/* Floating chatbot button — always visible */}
+      {/* Floating chatbot button — z-index above modal-z (2000) so it's always visible */}
       {!chatOpen && (
         <button
           onClick={() => setChatOpen(true)}
           title="Open AI Copilot"
           style={{
-            position: 'fixed', bottom: 24, right: 24,
-            width: 52, height: 52, borderRadius: '50%',
-            background: 'linear-gradient(135deg, var(--brand-orange), #c0392b)',
-            border: 'none', cursor: 'pointer', zIndex: 400,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 22, boxShadow: '0 4px 20px rgba(232,119,34,0.5)',
-            transition: 'transform 0.15s',
+            position:     'fixed',
+            bottom:       24,
+            right:        24,
+            width:        52,
+            height:       52,
+            borderRadius: '50%',
+            background:   'linear-gradient(135deg, #E87722, #c0392b)',
+            border:       'none',
+            cursor:       'pointer',
+            zIndex:       9999,          // above everything
+            display:      'flex',
+            alignItems:   'center',
+            justifyContent: 'center',
+            fontSize:     22,
+            boxShadow:    '0 4px 20px rgba(232,119,34,0.55)',
+            transition:   'transform 0.15s',
           }}
-          onMouseOver={e => e.currentTarget.style.transform = 'scale(1.08)'}
+          onMouseOver={e => e.currentTarget.style.transform = 'scale(1.1)'}
           onMouseOut={e  => e.currentTarget.style.transform = 'scale(1)'}
           aria-label="Open AI Copilot"
         >
