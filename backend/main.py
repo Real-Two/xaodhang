@@ -20,7 +20,6 @@ from risk_engine import compute_combined_risk, compute_rainfall_risk
 from routers import (alerts, chatbot, forecast, history, live, predict,
                      rainfall, reports, zones, scan)
 
-# Create all DB tables
 Base.metadata.create_all(bind=engine)
 
 NER_ZONES = [
@@ -38,7 +37,6 @@ NER_ZONES = [
 
 
 def _auto_seed():
-    """Seed NER zones if DB is empty — survives Railway redeploys."""
     from database import SessionLocal
     db = SessionLocal()
     try:
@@ -55,33 +53,41 @@ def _auto_seed():
 
 def _startup_pipeline():
     """
-    Runs in a background thread 5s after startup.
-    Fetches rainfall + structural risk for any zones with blank data.
-    This means every Railway redeploy self-heals automatically —
-    no manual /pipeline/run needed.
+    Background thread: populates rainfall (Open-Meteo) + structural risk
+    for any zones that are blank after a fresh deploy.
+    Rainfall no longer needs GEE — Open-Meteo is a plain HTTP call.
     """
     def _run():
         import time
         time.sleep(5)
 
+        import fetch_rainfall_openmeteo
         from database import SessionLocal
         from routers.predict import _run_model_for_zone
-        from routers.rainfall import _do_gee_fetch
 
         db = SessionLocal()
         try:
             blank = [z for z in db.query(models.Zone).all()
                      if z.structural_risk == 0.0]
             if not blank:
-                print("[STARTUP] All zones populated — skipping auto-pipeline.")
+                print("[STARTUP] All zones populated — skipping.")
                 return
 
             print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
             for zone in blank:
+                # Rainfall — Open-Meteo, no GEE
                 try:
-                    _do_gee_fetch(zone, db)
+                    r = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
+                    zone.rainfall_mm_24h     = r["rainfall_mm_24h"]
+                    zone.rainfall_mm_48h     = r["rainfall_mm_48h"]
+                    zone.rainfall_mm_72h     = r["rainfall_mm_72h"]
+                    zone.rainfall_updated_at = datetime.datetime.utcnow()
+                    db.commit()
+                    print(f"[STARTUP] Rainfall {zone.name}: {r['rainfall_mm_72h']:.1f}mm/72h ({r.get('source','')})")
                 except Exception as e:
                     print(f"[STARTUP] Rainfall error {zone.name}: {e}")
+
+                # Structural — GEE + UNet (may fail if GEE not configured)
                 try:
                     _run_model_for_zone(zone, db)
                 except Exception as e:
@@ -112,15 +118,11 @@ def _startup_pipeline():
 _auto_seed()
 _startup_pipeline()
 
-# ---------------------------------------------------------------------------
+# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Xaodhang — NER Landslide Early Warning API",
-    description=(
-        "RedBeryl / SIH26001. Two-layer risk engine: DeepLabV3+ structural "
-        "risk + CHIRPS rainfall trigger. Covers 10 seeded NER zones and any "
-        "arbitrary coordinate via /predict/live."
-    ),
-    version="0.4.0",
+    description="RedBeryl / SIH26001. Real satellite → UNet → Open-Meteo → USGS seismic pipeline.",
+    version="0.5.0",
 )
 
 app.add_middleware(
@@ -151,47 +153,46 @@ def health_check():
         "status": "ok",
         "service": "Xaodhang NER Landslide Early Warning API",
         "team": "RedBeryl",
-        "version": "0.4.0",
+        "version": "0.5.0",
+        "data_sources": {
+            "satellite":  "Sentinel-2 (COPERNICUS/S2_HARMONIZED) via GEE",
+            "elevation":  "JAXA AW3D30 DEM via GEE",
+            "rainfall":   "Open-Meteo ERA5-Land archive (real-time, no key)",
+            "seismic":    "USGS FDSN earthquake catalogue (live, 30min cache)",
+            "model":      "UNet ONNX — Landslide4Sense trained",
+        },
         "features": [
-            "structural-risk", "rainfall-trigger", "combined-risk-engine",
-            "72h-forecast", "multilingual-sms-alerts", "ai-chatbot",
-            "risk-history", "citizen-reporting", "live-prediction",
-            "pipeline-run", "auto-startup-pipeline",
-            "ner-regional-scan",   # NEW
+            "satellite-inference", "rainfall-open-meteo", "seismic-usgs",
+            "impact-scoring", "risk-history", "ner-regional-scan",
+            "citizen-reporting", "live-prediction", "72h-forecast",
         ],
     }
 
 
 @app.post("/pipeline/run", tags=["pipeline"])
 def run_pipeline(db=Depends(get_db)):
-    """
-    Full refresh for all zones:
-    1. Fetch CHIRPS rainfall from GEE
-    2. Run DeepLabV3+ inference
-    3. Log to RiskHistory
-    4. Fire SMS alerts on new HIGH/CRITICAL crossings
-    """
+    """Manual full refresh — rainfall (Open-Meteo) + model + history + alerts."""
+    import fetch_rainfall_openmeteo
     from routers.alerts import (ALERT_THRESHOLD_LEVELS, DEFAULT_RECIPIENTS,
                                 _build_message, _get_last_alert_level,
                                 _send_fast2sms)
     from routers.predict import _run_model_for_zone
-    from routers.rainfall import _do_gee_fetch
 
     all_zones = db.query(models.Zone).all()
-    summary = []
+    summary   = []
 
     for zone in all_zones:
-        entry = {
-            "zone_id": zone.id,
-            "zone_name": zone.name,
-            "rainfall": "skipped",
-            "model": "skipped",
-            "alert": "skipped",
-        }
+        entry = {"zone_id": zone.id, "zone_name": zone.name,
+                 "rainfall": "skipped", "model": "skipped", "alert": "skipped"}
 
         try:
-            _do_gee_fetch(zone, db)
-            entry["rainfall"] = "ok"
+            r = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
+            zone.rainfall_mm_24h     = r["rainfall_mm_24h"]
+            zone.rainfall_mm_48h     = r["rainfall_mm_48h"]
+            zone.rainfall_mm_72h     = r["rainfall_mm_72h"]
+            zone.rainfall_updated_at = datetime.datetime.utcnow()
+            db.commit()
+            entry["rainfall"] = f"ok ({r.get('source','')})"
         except Exception as e:
             entry["rainfall"] = f"error: {e}"
 
@@ -219,14 +220,13 @@ def run_pipeline(db=Depends(get_db)):
             entry["history_error"] = str(e)
 
         entry["combined_score"] = round(combined_score, 3)
-        entry["risk_level"] = risk_level
+        entry["risk_level"]     = risk_level
 
         try:
             if risk_level in ALERT_THRESHOLD_LEVELS:
                 last = _get_last_alert_level(zone.id, db)
                 if last != risk_level:
-                    recipients = [r for r in DEFAULT_RECIPIENTS.split(",")
-                                  if r.strip()]
+                    recipients = [r for r in DEFAULT_RECIPIENTS.split(",") if r.strip()]
                     for lang in ["en", "hi", "as", "mni"]:
                         msg = _build_message(zone, risk_level, combined_score, lang)
                         ok, err = _send_fast2sms(msg, recipients)
@@ -235,13 +235,12 @@ def run_pipeline(db=Depends(get_db)):
                             combined_score=combined_score, channel="sms",
                             language=lang, message=msg,
                             recipients=",".join(recipients),
-                            status="sent" if ok else "failed",
-                            error=err or None,
+                            status="sent" if ok else "failed", error=err or None,
                         ))
                     db.commit()
                     entry["alert"] = f"fired ({risk_level})"
                 else:
-                    entry["alert"] = f"suppressed (already at {risk_level})"
+                    entry["alert"] = f"suppressed (already {risk_level})"
             else:
                 entry["alert"] = f"not needed ({risk_level})"
         except Exception as e:
@@ -250,7 +249,7 @@ def run_pipeline(db=Depends(get_db)):
         summary.append(entry)
 
     return {
-        "ran_at": datetime.datetime.utcnow().isoformat(),
-        "zones_processed": len(summary),
-        "zones": summary,
+        "ran_at":           datetime.datetime.utcnow().isoformat(),
+        "zones_processed":  len(summary),
+        "zones":            summary,
     }

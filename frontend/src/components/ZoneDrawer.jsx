@@ -28,7 +28,7 @@ export default function ZoneDrawer() {
     const stageLabel = {
       satellite: '🛰 Fetching Sentinel-2 & JAXA elevation data...',
       model:     '🧠 Running UNet terrain segmentation...',
-      rainfall:  '🌧 Querying CHIRPS 72h precipitation...',
+      rainfall:  '🌧 Querying Open-Meteo ERA5-Land precipitation...',
     }[stage] || '🛰 Fetching satellite data...';
 
     return (
@@ -54,7 +54,7 @@ export default function ZoneDrawer() {
               </div>
               <div className="zone-drawer__loading-text">
                 <span className="zone-drawer__loading-stage">{stageLabel}</span>
-                <span className="zone-drawer__loading-hint">GEE satellite pipeline typically takes 5–10 seconds</span>
+                <span className="zone-drawer__loading-hint">Satellite pipeline typically takes 5–10 seconds</span>
               </div>
             </div>
             <div className="zone-drawer__pipeline-steps">
@@ -63,9 +63,9 @@ export default function ZoneDrawer() {
                 { key: 'model',     icon: '🧠', label: 'AI inference' },
                 { key: 'rainfall',  icon: '🌧', label: 'Rainfall query' },
               ].map(step => {
-                const order   = ['satellite', 'model', 'rainfall'];
-                const isDone  = order.indexOf(step.key) < order.indexOf(stage);
-                const isCur   = step.key === stage;
+                const order  = ['satellite', 'model', 'rainfall'];
+                const isDone = order.indexOf(step.key) < order.indexOf(stage);
+                const isCur  = step.key === stage;
                 return (
                   <div key={step.key} className={`zone-drawer__pipeline-step${isCur ? ' zone-drawer__pipeline-step--active' : ''}${isDone ? ' zone-drawer__pipeline-step--done' : ''}`}>
                     <span className="zone-drawer__pipeline-icon">{isDone ? '✓' : step.icon}</span>
@@ -121,17 +121,17 @@ export default function ZoneDrawer() {
   const rain48 = zone.rainfall_mm_48h ?? null;
   const rain24 = zone.rainfall_mm_24h ?? null;
 
-  const maskBase64 = zone.mask_png_base64 || (zone.id ? state.structuralResults?.[zone.id]?.mask_png_base64 : null);
+  const maskBase64       = zone.mask_png_base64 || (zone.id ? state.structuralResults?.[zone.id]?.mask_png_base64 : null);
   const zoneIdForHistory = zone.id ?? zone.zone_id ?? null;
   const showTrendChart   = !isLive || (zone.zone_id && typeof zone.zone_id === 'number');
 
-  // Seismic context
+  // Seismic
   const seismicUplift = zone.seismic_uplift ?? 0;
   const seismicNote   = zone.seismic_note ?? null;
   const seismicEvents = zone.seismic_events_72h ?? 0;
   const hasSeismic    = seismicUplift > 0.01 && seismicNote;
 
-  // Impact context
+  // Impact
   const population  = zone.population_5km ?? null;
   const infra       = zone.critical_infra ?? [];
   const impactScore = zone.impact_score ?? null;
@@ -195,35 +195,24 @@ export default function ZoneDrawer() {
             </div>
           </div>
 
-          {/* ── Impact row — compact, right below hero ──────────────────── */}
+          {/* ── Impact row ──────────────────────────────────────────────── */}
           {hasImpact && (
             <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-              padding: '10px 14px',
-              background: 'var(--bg-panel)',
-              borderRadius: 'var(--r-md)',
-              border: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              padding: '10px 14px', background: 'var(--bg-panel)',
+              borderRadius: 'var(--r-md)', border: '1px solid var(--border)',
               marginBottom: 'var(--sp-3)',
             }}>
-              {/* Population */}
               {population != null && (
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ fontSize: 14 }}>👥</span>
-                  <strong style={{ color: level === 'CRITICAL' || level === 'HIGH' ? meta.color : 'var(--text-primary)' }}>
+                  <strong style={{ color: (level === 'CRITICAL' || level === 'HIGH') ? meta.color : 'var(--text-primary)' }}>
                     ~{population.toLocaleString()}
                   </strong>
                   <span style={{ color: 'var(--text-muted)' }}>people within 5km</span>
                 </span>
               )}
-
-              {population != null && infra.length > 0 && (
-                <span style={{ color: 'var(--border)', fontSize: 14 }}>·</span>
-              )}
-
-              {/* Road */}
+              {population != null && infra.length > 0 && <span style={{ color: 'var(--border)', fontSize: 14 }}>·</span>}
               {infra.find(i => i.type === 'road') && (() => {
                 const road = infra.find(i => i.type === 'road');
                 return (
@@ -238,34 +227,21 @@ export default function ZoneDrawer() {
                   </span>
                 );
               })()}
-
-              {infra.length > 0 && infra.find(i => i.type !== 'road') && (
-                <span style={{ color: 'var(--border)', fontSize: 14 }}>·</span>
-              )}
-
-              {/* Facility */}
+              {infra.length > 0 && infra.find(i => i.type !== 'road') && <span style={{ color: 'var(--border)', fontSize: 14 }}>·</span>}
               {infra.find(i => i.type !== 'road') && (() => {
-                const fac = infra.find(i => i.type !== 'road');
+                const fac  = infra.find(i => i.type !== 'road');
                 const icon = { hospital: '🏥', PHC: '🏥', railway: '🚉', bridge: '🌉' }[fac.type] || '📍';
                 return (
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ fontSize: 13 }}>{icon}</span>
                     <span>{fac.name}</span>
-                    <span style={{
-                      fontSize: 10, padding: '1px 6px', borderRadius: 99,
-                      background: 'var(--bg-deep)', color: 'var(--text-muted)',
-                    }}>{fac.dist_km}km</span>
+                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 99, background: 'var(--bg-deep)', color: 'var(--text-muted)' }}>{fac.dist_km}km</span>
                   </span>
                 );
               })()}
-
-              {/* Impact score — far right */}
               {impactScore != null && (
                 <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-                  Impact{' '}
-                  <strong style={{ color: impactScore >= 70 ? meta.color : 'var(--text-primary)' }}>
-                    {impactScore}/100
-                  </strong>
+                  Impact <strong style={{ color: impactScore >= 70 ? meta.color : 'var(--text-primary)' }}>{impactScore}/100</strong>
                 </span>
               )}
             </div>
@@ -297,18 +273,11 @@ export default function ZoneDrawer() {
               <p className="zone-drawer__signal-notes">
                 <strong>UNet:</strong> 10m Sentinel-2 + JAXA AW3D30 slope &amp; elevation.
               </p>
-
-              {/* ── Seismic note — inline in terrain card ─────────────── */}
               {hasSeismic && (
                 <div style={{
-                  marginTop: 8,
-                  padding: '6px 10px',
-                  borderRadius: 'var(--r-sm)',
-                  background: 'rgba(232,119,34,0.10)',
-                  border: '1px solid rgba(232,119,34,0.25)',
-                  fontSize: 11,
-                  color: 'var(--brand-orange)',
-                  lineHeight: 1.5,
+                  marginTop: 8, padding: '6px 10px', borderRadius: 'var(--r-sm)',
+                  background: 'rgba(232,119,34,0.10)', border: '1px solid rgba(232,119,34,0.25)',
+                  fontSize: 11, color: 'var(--brand-orange)', lineHeight: 1.5,
                 }}>
                   <span style={{ fontWeight: 700 }}>⚡ +{(seismicUplift * 100).toFixed(1)}pp seismic</span>
                   {seismicEvents > 0 && (
@@ -329,7 +298,7 @@ export default function ZoneDrawer() {
               </div>
               <div className="zone-drawer__signal-value-row">
                 <span className="zone-drawer__signal-val">{rainfallPct}%</span>
-                <span className="zone-drawer__signal-tag">CHIRPS 72h</span>
+                <span className="zone-drawer__signal-tag">Open-Meteo 72h</span>
               </div>
               <div className="zone-drawer__bar-track">
                 <div className="zone-drawer__bar-fill" style={{
@@ -338,7 +307,7 @@ export default function ZoneDrawer() {
                 }} />
               </div>
               <p className="zone-drawer__signal-notes">
-                <strong>CHIRPS:</strong>{' '}
+                <strong>ERA5-Land:</strong>{' '}
                 {rain72 != null ? `${rain72.toFixed(1)}mm cumulative over 72 hours.` : 'Precipitation data pending.'}
               </p>
             </div>
@@ -353,7 +322,7 @@ export default function ZoneDrawer() {
           {/* Rainfall accumulation */}
           <div className="zone-drawer__section-title">
             <span>Precipitation Accumulation</span>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>CHIRPS</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Open-Meteo ERA5-Land</span>
           </div>
 
           <div className="zone-drawer__rain-trend glass-card">
@@ -419,7 +388,6 @@ export default function ZoneDrawer() {
   );
 }
 
-// ── RainRow ───────────────────────────────────────────────────────────────────
 function RainRow({ label, val, maxMm, color, bold }) {
   if (val == null) {
     return (
