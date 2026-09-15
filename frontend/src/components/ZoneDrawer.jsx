@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { RISK_META, normalizeRiskLevel } from './RiskCard';
 import { useLiveQuery } from '../hooks/useLiveQuery';
 import RiskTrendChart from './RiskTrendChart';
+import RiskTrajectory from './RiskTrajectory';
 
 export default function ZoneDrawer() {
   const { state, actions } = useApp();
@@ -23,7 +24,7 @@ export default function ZoneDrawer() {
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (isLoading) {
-    const stage = state.liveQuery?.stage ?? 'satellite';
+    const stage   = state.liveQuery?.stage ?? 'satellite';
     const elapsed = state.liveQuery?.elapsed ?? 0;
     const stageLabel = {
       satellite: '🛰 Fetching Sentinel-2 & JAXA elevation data...',
@@ -124,6 +125,9 @@ export default function ZoneDrawer() {
   const maskBase64       = zone.mask_png_base64 || (zone.id ? state.structuralResults?.[zone.id]?.mask_png_base64 : null);
   const zoneIdForHistory = zone.id ?? zone.zone_id ?? null;
   const showTrendChart   = !isLive || (zone.zone_id && typeof zone.zone_id === 'number');
+
+  // Only show trajectory for seeded zones (have integer DB id)
+  const showTrajectory = zoneIdForHistory && typeof zoneIdForHistory === 'number';
 
   // Seismic
   const seismicUplift = zone.seismic_uplift ?? 0;
@@ -254,7 +258,6 @@ export default function ZoneDrawer() {
           </div>
 
           <div className="zone-drawer__dual-grid">
-            {/* Layer 1: Terrain */}
             <div className="zone-drawer__signal-card">
               <div className="zone-drawer__signal-header">
                 <span className="zone-drawer__signal-icon">⛰️</span>
@@ -281,16 +284,13 @@ export default function ZoneDrawer() {
                 }}>
                   <span style={{ fontWeight: 700 }}>⚡ +{(seismicUplift * 100).toFixed(1)}pp seismic</span>
                   {seismicEvents > 0 && (
-                    <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
-                      ({seismicEvents} event{seismicEvents !== 1 ? 's' : ''} nearby)
-                    </span>
+                    <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>({seismicEvents} event{seismicEvents !== 1 ? 's' : ''} nearby)</span>
                   )}
                   <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>{seismicNote}</div>
                 </div>
               )}
             </div>
 
-            {/* Layer 2: Rainfall */}
             <div className="zone-drawer__signal-card">
               <div className="zone-drawer__signal-header">
                 <span className="zone-drawer__signal-icon">🌧️</span>
@@ -319,6 +319,15 @@ export default function ZoneDrawer() {
             <code>Risk = 0.60×Terrain + 0.40×Rainfall + 0.15×(T×R){hasSeismic ? ' + seismic' : ''}</code>
           </div>
 
+          {/* ── Risk Trajectory — 72h forecast timeline ─────────────────── */}
+          {showTrajectory && (
+            <RiskTrajectory
+              zoneId={zoneIdForHistory}
+              currentLevel={level}
+              currentScore={zone.combined_score}
+            />
+          )}
+
           {/* Rainfall accumulation */}
           <div className="zone-drawer__section-title">
             <span>Precipitation Accumulation</span>
@@ -331,7 +340,7 @@ export default function ZoneDrawer() {
             <RainRow label="72h Cumulative"   val={rain72} maxMm={150} color={meta.color} bold />
           </div>
 
-          {/* Risk Trend Chart */}
+          {/* Historical trend chart */}
           {showTrendChart && zoneIdForHistory && (
             <>
               <div className="zone-drawer__section-title" style={{ marginTop: 'var(--sp-4)' }}>
@@ -404,8 +413,7 @@ function RainRow({ label, val, maxMm, color, bold }) {
         <div className="zone-drawer__rain-bar"
              style={{ width: `${Math.min(100, (val / maxMm) * 100)}%`, ...(color ? { background: color } : {}) }} />
       </div>
-      <span className="zone-drawer__rain-val"
-            style={bold ? { fontWeight: 700, color: color || 'var(--text-primary)' } : {}}>
+      <span className="zone-drawer__rain-val" style={bold ? { fontWeight: 700, color: color || 'var(--text-primary)' } : {}}>
         {val.toFixed(1)} mm
       </span>
     </div>

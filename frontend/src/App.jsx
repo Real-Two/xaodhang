@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { useZones } from './hooks/useZones';
 import { useReports } from './hooks/useReports';
@@ -13,22 +13,20 @@ import ZoneDrawer from './components/ZoneDrawer';
 import AlertsDrawer from './components/AlertsDrawer';
 import AboutPanel from './components/AboutPanel';
 import ReportForm from './components/ReportForm';
+import ChatbotPanel from './components/ChatbotPanel';
 
 import './App.css';
 
-// Main Dashboard Shell
 function DashboardShell() {
   const { state, actions, mapRef } = useApp();
+  const [chatOpen, setChatOpen] = useState(false);
 
-  // Polling hooks for live telemetry
   useZones();
   useReports();
 
   const handleLocateOnMap = (item) => {
-    // Switch to map view and fly to location
     if (item.lat != null && item.lon != null) {
       actions.setView('map');
-      // Small delay so MapView has time to mount/rehydrate before flyTo
       setTimeout(() => {
         if (mapRef.current) {
           mapRef.current.setView([item.lat, item.lon], 11, { animate: true });
@@ -39,42 +37,56 @@ function DashboardShell() {
 
   return (
     <div className={`app-shell ${state.bandwidthMode ? 'app-shell--bandwidth-mode' : ''}`}>
-      {/* 1. Slim Icon Navigation Sidebar */}
-      <NavigationSidebar />
+      <NavigationSidebar onChatOpen={() => setChatOpen(true)} />
 
-      {/* 2. Main Content Area */}
       <div className="app-main">
-        {/* Top Header */}
         <HeaderBar />
-
-        {/* Dynamic View Body */}
         <div className="app-content">
-          {state.currentView === 'map' && (
-            <MapView mapRef={mapRef} />
-          )}
-
+          {state.currentView === 'map' && <MapView mapRef={mapRef} />}
           {state.currentView === 'priority' && (
             <PriorityView
-              onInspectZone={(z) => actions.setSelectedZone(z)}
+              onInspectZone={z => actions.setSelectedZone(z)}
               onLocateOnMap={handleLocateOnMap}
             />
           )}
-
           {state.currentView === 'reports' && (
             <ReportsView onLocateReport={handleLocateOnMap} />
           )}
-
           {state.currentView === 'scan' && (
             <ScanView onLocateOnMap={handleLocateOnMap} />
           )}
         </div>
       </div>
 
-      {/* 3. Global Overlays & Modals */}
       <ZoneDrawer />
       <AlertsDrawer onLocateZone={handleLocateOnMap} />
       <AboutPanel />
       <ReportForm />
+
+      {/* Chatbot — slide in from right */}
+      {chatOpen && <ChatbotPanel onClose={() => setChatOpen(false)} />}
+
+      {/* Floating chatbot button — always visible */}
+      {!chatOpen && (
+        <button
+          onClick={() => setChatOpen(true)}
+          title="Open AI Copilot"
+          style={{
+            position: 'fixed', bottom: 24, right: 24,
+            width: 52, height: 52, borderRadius: '50%',
+            background: 'linear-gradient(135deg, var(--brand-orange), #c0392b)',
+            border: 'none', cursor: 'pointer', zIndex: 400,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22, boxShadow: '0 4px 20px rgba(232,119,34,0.5)',
+            transition: 'transform 0.15s',
+          }}
+          onMouseOver={e => e.currentTarget.style.transform = 'scale(1.08)'}
+          onMouseOut={e  => e.currentTarget.style.transform = 'scale(1)'}
+          aria-label="Open AI Copilot"
+        >
+          🤖
+        </button>
+      )}
     </div>
   );
 }
