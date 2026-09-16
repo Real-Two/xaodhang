@@ -14,11 +14,10 @@ import EvacuationOverlay from './EvacuationOverlay';
 import { RISK_META, normalizeRiskLevel } from './RiskCard';
 
 const MAP_CENTER = [25.5, 93.0];
-const MAP_ZOOM = 7;
+const MAP_ZOOM   = 7;
 const NER_BOUNDS = [[21.5, 88.0], [29.6, 97.5]];
-const TILE_URL  = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTR = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
+const TILE_URL   = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const TILE_ATTR  = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const RISK_RADIUS = { CRITICAL: 14, HIGH: 12, MODERATE: 10, LOW: 8 };
 
 function MapClickHandler({ onMapClick }) {
@@ -27,12 +26,12 @@ function MapClickHandler({ onMapClick }) {
 }
 
 function EnhancedZoneMarker({ zone, onSelect }) {
-  const map   = useMap();
-  const level = normalizeRiskLevel(zone.risk_level);
-  const meta  = RISK_META[level] || RISK_META.LOW;
+  const map         = useMap();
+  const level       = normalizeRiskLevel(zone.risk_level);
+  const meta        = RISK_META[level] || RISK_META.LOW;
   const displayName = zone.zone_name || zone.name || `Zone ${zone.id}`;
-  const radius   = RISK_RADIUS[level] || 10;
-  const isSevere = level === 'CRITICAL' || level === 'HIGH';
+  const radius      = RISK_RADIUS[level] || 10;
+  const isSevere    = level === 'CRITICAL' || level === 'HIGH';
 
   return (
     <>
@@ -40,7 +39,11 @@ function EnhancedZoneMarker({ zone, onSelect }) {
         <CircleMarker
           center={[zone.lat, zone.lon]}
           radius={radius + 8}
-          pathOptions={{ color: meta.color, fillColor: meta.color, fillOpacity: 0.12, weight: 1, opacity: 0.4, className: 'marker-pulse-ring' }}
+          pathOptions={{
+            color: meta.color, fillColor: meta.color,
+            fillOpacity: 0.12, weight: 1, opacity: 0.4,
+            className: 'marker-pulse-ring',
+          }}
           interactive={false}
         />
       )}
@@ -60,10 +63,14 @@ function EnhancedZoneMarker({ zone, onSelect }) {
           <div className="zone-mini-popup">
             <div className="zone-mini-popup__header">
               <span className={`badge badge--${level.toLowerCase()}`}>{meta.label}</span>
-              <span className="zone-mini-popup__score">{((zone.combined_score ?? 0) * 100).toFixed(0)}% Risk</span>
+              <span className="zone-mini-popup__score">
+                {((zone.combined_score ?? 0) * 100).toFixed(0)}% Risk
+              </span>
             </div>
             <h4 className="zone-mini-popup__title">{displayName}</h4>
-            <p className="zone-mini-popup__coords">📍 {zone.lat?.toFixed(3)}°N, {zone.lon?.toFixed(3)}°E</p>
+            <p className="zone-mini-popup__coords">
+              📍 {zone.lat?.toFixed(3)}°N, {zone.lon?.toFixed(3)}°E
+            </p>
             <button
               className="btn-primary"
               style={{ width: '100%', justifyContent: 'center', marginTop: 8, fontSize: 11, padding: '5px' }}
@@ -78,8 +85,10 @@ function EnhancedZoneMarker({ zone, onSelect }) {
   );
 }
 
-function FloatingLayerToolbar() {
+// Layer toolbar — hidden when chatbot is open
+function FloatingLayerToolbar({ hidden }) {
   const { state, actions } = useApp();
+  if (hidden) return null;
   return (
     <div className="layer-toolbar glass-panel animate-fade">
       <div className="layer-toolbar__header">
@@ -87,7 +96,12 @@ function FloatingLayerToolbar() {
       </div>
       <div className="layer-toolbar__list">
         <label className="layer-toggle-row">
-          <input type="checkbox" checked={state.layers.heatmap && !state.bandwidthMode} onChange={() => actions.toggleLayer('heatmap')} disabled={state.bandwidthMode} />
+          <input
+            type="checkbox"
+            checked={state.layers.heatmap && !state.bandwidthMode}
+            onChange={() => actions.toggleLayer('heatmap')}
+            disabled={state.bandwidthMode}
+          />
           <span className="layer-toggle-name">🔥 Terrain Heatmap</span>
           {state.bandwidthMode && <span className="badge badge--coming-soon">Low-BW</span>}
         </label>
@@ -141,40 +155,56 @@ function LivePipelineBanner() {
       <div className="live-progress-banner__top">
         <div className="live-progress-banner__status">
           <span className="spinner spinner-sm" />
-          <span>Analyzing Coordinates: <strong>{latStr}°N, {lonStr}°E</strong></span>
+          <span>Analyzing: <strong>{latStr}°N, {lonStr}°E</strong></span>
         </div>
-        <span className="live-progress-banner__timer">{elapsed}s (~{remaining}s remaining)</span>
+        <span className="live-progress-banner__timer">{elapsed}s (~{remaining}s)</span>
       </div>
-      <div className="live-progress-banner__stage">{stageDescriptions[stage] || stageDescriptions.satellite}</div>
+      <div className="live-progress-banner__stage">
+        {stageDescriptions[stage] || stageDescriptions.satellite}
+      </div>
       <div className="live-progress-banner__bar-track">
-        <div className="live-progress-banner__bar-fill" style={{ width: `${Math.min(95, (elapsed / 20) * 100)}%` }} />
+        <div className="live-progress-banner__bar-fill"
+             style={{ width: `${Math.min(95, (elapsed / 20) * 100)}%` }} />
       </div>
     </div>
   );
 }
 
-function FloatingLegend() {
+// Legend — hidden when chatbot is open
+function FloatingLegend({ hidden }) {
+  if (hidden) return null;
   return (
     <div className="floating-legend glass-panel">
       <span className="floating-legend__title">Landslide Hazard Severity</span>
       <div className="floating-legend__items">
-        {[['var(--risk-critical)', 'Critical'], ['var(--risk-high)', 'High'], ['var(--risk-moderate)', 'Moderate'], ['var(--risk-low)', 'Low']].map(([color, label]) => (
+        {[
+          ['var(--risk-critical)', 'Critical'],
+          ['var(--risk-high)',     'High'],
+          ['var(--risk-moderate)', 'Moderate'],
+          ['var(--risk-low)',      'Low'],
+        ].map(([color, label]) => (
           <div key={label} className="floating-legend__item">
-            <span className="floating-legend__dot" style={{ background: color, boxShadow: `0 0 6px ${color}` }} />
+            <span className="floating-legend__dot"
+                  style={{ background: color, boxShadow: `0 0 6px ${color}` }} />
             <span>{label}</span>
           </div>
         ))}
       </div>
-      <span className="floating-legend__hint">Click anywhere on map for live AI prediction</span>
+      <span className="floating-legend__hint">
+        Click anywhere on map for live AI prediction
+      </span>
     </div>
   );
 }
 
-export default function MapView({ mapRef }) {
+// chatOpen prop comes from App.jsx — hides right-side overlays when panel is open
+export default function MapView({ mapRef, chatOpen = false }) {
   const { state, actions } = useApp();
   const { queryPoint }     = useLiveQuery();
 
-  const handleMapClick = useCallback((lat, lon) => { queryPoint(lat, lon); }, [queryPoint]);
+  const handleMapClick = useCallback((lat, lon) => {
+    queryPoint(lat, lon);
+  }, [queryPoint]);
 
   const visibleZones = useMemo(() => state.zones.filter(z => {
     const lvl = normalizeRiskLevel(z.risk_level);
@@ -201,8 +231,12 @@ export default function MapView({ mapRef }) {
           {visibleZones.map(zone => (
             <React.Fragment key={zone.id}>
               <EnhancedZoneMarker zone={zone} onSelect={z => actions.setSelectedZone(z)} />
-              {!state.bandwidthMode && state.layers.heatmap && state.structuralResults[zone.id]?.mask_png_base64 && (
-                <HeatmapOverlay lat={zone.lat} lon={zone.lon} base64Png={state.structuralResults[zone.id].mask_png_base64} />
+              {!state.bandwidthMode && state.layers.heatmap
+                && state.structuralResults[zone.id]?.mask_png_base64 && (
+                <HeatmapOverlay
+                  lat={zone.lat} lon={zone.lon}
+                  base64Png={state.structuralResults[zone.id].mask_png_base64}
+                />
               )}
             </React.Fragment>
           ))}
@@ -216,16 +250,18 @@ export default function MapView({ mapRef }) {
 
         <LiveQueryPin />
 
-        {/* Evacuation route overlay — renders when HIGH/CRITICAL zone selected */}
         <EvacuationOverlay
           selectedZone={state.selectedZone}
           visible={!!state.selectedZone}
         />
       </MapContainer>
 
-      <FloatingLayerToolbar />
+      {/* Right-side floating panels — hidden when chatbot is open to avoid overlap */}
+      <FloatingLayerToolbar hidden={chatOpen} />
+      <FloatingLegend       hidden={chatOpen} />
+
+      {/* Progress banner always visible — it's at the top */}
       <LivePipelineBanner />
-      <FloatingLegend />
 
       {state.liveQuery.status === 'idle' && (
         <div className="map-interaction-hint glass-panel animate-fade">
