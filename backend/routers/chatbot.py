@@ -1,15 +1,18 @@
 """
-chatbot.py — Xaodhang AI Copilot on Groq (free, no credit card needed).
+chatbot.py — Xaodhang AI Copilot on Groq (free).
 
 Setup:
-  1. console.groq.com → API Keys → Create (free, no card required)
-  2. Railway → your service → Variables → add GROQ_API_KEY=gsk_...
-  3. Deploy.
+  1. console.groq.com → API Keys → Create (free, no card)
+  2. Render → xaodhang service → Environment → add GROQ_API_KEY=gsk_...
+  3. Auto-deploys on save.
 
-Models used:
-  Primary:  llama-3.3-70b-versatile  (30 RPM free, better quality)
-  Fallback: llama-3.1-8b-instant     (higher daily limit, faster)
-  Auto-fallback on 429 rate limit or timeout.
+Language fix:
+  Llama ignores system-prompt language instructions when the conversation
+  is in English. The only reliable trigger is prepending a short translated
+  instruction as the FIRST thing in the user message turn itself.
+  e.g. user message becomes:
+    "[Respond in Hindi only]\nWhich zones are critical?"
+  Llama bootstraps into Hindi from that first line and stays there.
 """
 
 import os
@@ -44,49 +47,38 @@ EVAC_TARGETS = {
     "champhai":   "Champhai Town Centre",
 }
 
-# Language instructions written in the target language so the model
-# bootstraps into the right mode immediately — more reliable than English
-# instructions asking it to switch language.
-LANG_INSTRUCTIONS = {
-    "en":  "Respond in clear, concise English.",
-    "hi":  "तुम्हें केवल हिंदी में जवाब देना है। Proper nouns के अलावा अंग्रेज़ी मत इस्तेमाल करो।",
-    "as":  "তুমি কেৱল অসমীয়া ভাষাত উত্তৰ দিবা। Proper noun ৰ বাহিৰে ইংৰাজী ব্যৱহাৰ নকৰিবা।",
-    "mni": "তোমার কেৱল মেইতেই ভাষাতে উত্তর দিতে হবে। Proper noun ছাড়া ইংরেজি ব্যবহার করো না।",
+# Prepended to EVERY user message when language != en.
+# Written in the target language so Llama bootstraps immediately.
+LANG_PREFIXES = {
+    "hi":  "[निर्देश: केवल हिंदी में उत्तर दें।]",
+    "as":  "[নির্দেশ: কেৱল অসমীয়াত উত্তৰ দিবা।]",
+    "mni": "[নির্দেশ: কেৱল মেইতেই ভাষাতে উত্তর দাও।]",
 }
 
-SYSTEM_PROMPT = """You are the Xaodhang AI Copilot — operational assistant for the Xaodhang Landslide Early Warning System (Team RedBeryl, SIH 2026, MDoNER / SIH26001).
+SYSTEM = """You are the Xaodhang AI Copilot — operational assistant for the Xaodhang Landslide Early Warning System (Team RedBeryl, SIH 2026, MDoNER SIH26001).
 
-*** LANGUAGE INSTRUCTION — MANDATORY, HIGHEST PRIORITY ***
-{lang_instruction}
-*** END LANGUAGE INSTRUCTION ***
+You MUST respond in whatever language the user message instructs. If the message starts with a [নির্দেশ] or [निर्देश] tag, follow it strictly and respond entirely in that language.
 
-SYSTEM:
-Risk = 0.60×Terrain + 0.40×Rainfall + 0.15×(Terrain×Rainfall) + seismic uplift
-Data: UNet on Sentinel-2 | Open-Meteo ERA5-Land | USGS earthquake feed
+SYSTEM: UNet on Sentinel-2 | Open-Meteo ERA5-Land rainfall | USGS seismic
+Risk = 0.60×Terrain + 0.40×Rainfall + 0.15×(T×R) + seismic
 
-RISK LEVELS:
-LOW <35%: routine monitoring
-MODERATE 35-55%: prepare teams, monitor closely
-HIGH 55-75%: issue advisory, pre-position rescue, restrict slope access
-CRITICAL >75%: EVACUATE IMMEDIATELY, dispatch teams now
+LEVELS: LOW<35% | MODERATE 35-55% | HIGH 55-75% | CRITICAL>75%
 
-LIVE ZONE DATA (highest risk first):
+CURRENT ZONE DATA (highest risk first):
 {zone_context}
 
 RULES:
-- State recommended action FIRST for HIGH/CRITICAL zones
+- For HIGH/CRITICAL: state recommended action FIRST
 - Rank by combined score then population when prioritising
-- Give specific evacuation destination when asked about any zone
-- Answers under 150 words unless more is genuinely needed
-- Only discuss: NER landslides, these zones, risk, evacuation, Xaodhang system"""
+- Give specific evacuation destination when asked
+- Under 150 words unless genuinely needed
+- Only discuss: NER landslides, zones, risk, evacuation, Xaodhang"""
 
 
 def _build_context(db: Session) -> str:
-    """DB-only — zero HTTP calls, instant, never times out."""
     zones = db.query(models.Zone).all()
     if not zones:
         return "No zone data available."
-
     rows = []
     for z in zones:
         rr           = compute_rainfall_risk(z.rainfall_mm_72h or 0)
@@ -97,7 +89,6 @@ def _build_context(db: Session) -> str:
         pop          = f"~{impact['population_5km']:,} people" if impact["population_5km"] else "pop unknown"
         road         = next((i["name"] for i in impact.get("critical_infra", []) if i["type"] == "road"), "—")
         rows.append((score, f"[{level}] {z.name}: {score*100:.0f}% | terrain {z.structural_risk*100:.0f}% | rain {z.rainfall_mm_72h:.0f}mm | {pop} | {road} | evac→{evac}"))
-
     rows.sort(key=lambda x: x[0], reverse=True)
     return "\n".join(r for _, r in rows)
 
@@ -119,23 +110,24 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="GROQ_API_KEY not set. Get a free key at console.groq.com and add it to Railway env vars.",
+            detail="GROQ_API_KEY not configured. Add it to Render environment variables (console.groq.com for a free key).",
         )
 
-    lang_code = req.language if req.language in LANG_INSTRUCTIONS else "en"
-    system    = SYSTEM_PROMPT.format(
-        lang_instruction=LANG_INSTRUCTIONS[lang_code],
-        zone_context=_build_context(db),
-    )
+    # Prepend language instruction to user message if not English
+    lang     = req.language if req.language in LANG_PREFIXES else "en"
+    prefix   = LANG_PREFIXES.get(lang, "")
+    user_msg = f"{prefix}\n{req.message}" if prefix else req.message
+
+    system = SYSTEM.format(zone_context=_build_context(db))
 
     messages = [
         {"role": h["role"], "content": h["content"]}
         for h in req.history[-6:]
         if h.get("role") in ("user", "assistant") and h.get("content")
     ]
-    messages.append({"role": "user", "content": req.message})
+    messages.append({"role": "user", "content": user_msg})
 
-    reply = None
+    reply      = None
     last_error = None
 
     for model in [MODEL_GOOD, MODEL_FAST]:
@@ -156,27 +148,26 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
             )
 
             if resp.status_code == 429:
-                last_error = f"Rate limited on {model}"
-                continue   # try fallback model
+                last_error = f"rate limited on {model}"
+                continue
 
             resp.raise_for_status()
             reply = resp.json()["choices"][0]["message"]["content"]
             break
 
         except httpx.TimeoutException:
-            last_error = f"Timeout on {model}"
+            last_error = f"timeout on {model}"
             continue
         except httpx.HTTPStatusError as e:
-            last_error = e.response.text[:300]
+            last_error = e.response.text[:200]
             if e.response.status_code == 429:
                 continue
-            # Non-rate-limit error — don't retry
             raise HTTPException(status_code=502, detail=f"Groq error: {last_error}")
 
     if reply is None:
         raise HTTPException(
             status_code=503,
-            detail=f"Groq unavailable: {last_error}. Try again in 30 seconds.",
+            detail=f"Groq unavailable ({last_error}). Try again in 30 seconds.",
         )
 
     zones            = db.query(models.Zone).all()
@@ -184,9 +175,9 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
 
     ru = reply.upper()
     suggested_action = (
-        "EVACUATE"     if "EVACUATE" in ru else
-        "DEPLOY_TEAMS" if ("DEPLOY" in ru or "DISPATCH" in ru) else
-        "MONITOR"      if ("MONITOR" in ru or "ADVISORY" in ru) else
+        "EVACUATE"     if "EVACUATE" in ru or "निकासी" in reply or "খালী" in reply else
+        "DEPLOY_TEAMS" if "DEPLOY"   in ru or "DISPATCH" in ru else
+        "MONITOR"      if "MONITOR"  in ru or "ADVISORY" in ru else
         None
     )
 
