@@ -1,28 +1,18 @@
 """
-chatbot.py — Scenario-aware AI assistant for Xaodhang.
+chatbot.py — Xaodhang AI Copilot on Groq (free, no credit card needed).
 
-POST /chat
+Setup:
+  1. console.groq.com → API Keys → Create (free, no card required)
+  2. Railway → your service → Variables → add GROQ_API_KEY=gsk_...
+  3. Deploy.
 
-The assistant has full situational awareness:
-  - Current risk level and score for every zone
-  - Forecast risk for next 72h per zone
-  - Impact data (population, roads, facilities)
-  - Evacuation routes to nearest district HQ
-  - Priority ordering
-
-It can answer:
-  - "Which zones are critical right now?"
-  - "What's the evacuation route for Noney?"
-  - "Where should I send teams first?"
-  - "Will conditions get worse in Manipur tonight?"
-  - "How many people are at risk across HIGH zones?"
-  - "What does a 78% risk score mean?"
-
-Uses claude-haiku — fast, cheap (~$0.001 per query), already integrated.
+Models used:
+  Primary:  llama-3.3-70b-versatile  (30 RPM free, better quality)
+  Fallback: llama-3.1-8b-instant     (higher daily limit, faster)
+  Auto-fallback on 429 rate limit or timeout.
 """
 
 import os
-import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,213 +26,169 @@ from zone_impact import get_zone_impact
 
 router = APIRouter(prefix="/chat", tags=["chatbot"])
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_URL     = "https://api.anthropic.com/v1/messages"
-MODEL             = "claude-haiku-4-5-20251001"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
+MODEL_GOOD   = "llama-3.3-70b-versatile"
+MODEL_FAST   = "llama-3.1-8b-instant"
 
-# District HQ evacuation targets — nearest safe destination per zone
-EVACUATION_TARGETS = {
-    "noney":      {"name": "Noney District HQ",        "lat": 24.9883, "lon": 93.5167},
-    "tupul":      {"name": "Noney District HQ",        "lat": 24.9883, "lon": 93.5167},
-    "aizawl":    {"name": "Aizawl City",              "lat": 23.7271, "lon": 92.7176},
-    "shillong":  {"name": "Jowai Town",               "lat": 25.4500, "lon": 92.2000},
-    "kohima":    {"name": "Senapati District HQ",     "lat": 25.2667, "lon": 94.0167},
-    "jiribam":   {"name": "Jiribam Town Centre",      "lat": 24.8000, "lon": 93.1000},
-    "gangtok":   {"name": "Gangtok City Centre",      "lat": 27.3389, "lon": 88.6065},
-    "tawang":    {"name": "Dirang Town",              "lat": 27.3583, "lon": 92.2417},
-    "dima hasao": {"name": "Haflong Town",            "lat": 25.1700, "lon": 93.0200},
-    "champhai":  {"name": "Champhai Town Centre",     "lat": 23.4588, "lon": 93.3221},
+EVAC_TARGETS = {
+    "noney":      "Noney District HQ",
+    "tupul":      "Noney District HQ",
+    "aizawl":     "Aizawl City",
+    "shillong":   "Jowai Town",
+    "kohima":     "Senapati District HQ",
+    "jiribam":    "Jiribam Town Centre",
+    "gangtok":    "Gangtok City Centre",
+    "tawang":     "Dirang Town",
+    "dima hasao": "Haflong Town",
+    "champhai":   "Champhai Town Centre",
 }
 
+# Language instructions written in the target language so the model
+# bootstraps into the right mode immediately — more reliable than English
+# instructions asking it to switch language.
+LANG_INSTRUCTIONS = {
+    "en":  "Respond in clear, concise English.",
+    "hi":  "तुम्हें केवल हिंदी में जवाब देना है। Proper nouns के अलावा अंग्रेज़ी मत इस्तेमाल करो।",
+    "as":  "তুমি কেৱল অসমীয়া ভাষাত উত্তৰ দিবা। Proper noun ৰ বাহিৰে ইংৰাজী ব্যৱহাৰ নকৰিবা।",
+    "mni": "তোমার কেৱল মেইতেই ভাষাতে উত্তর দিতে হবে। Proper noun ছাড়া ইংরেজি ব্যবহার করো না।",
+}
 
-def _match_evac_key(zone_name: str) -> str | None:
-    name_lower = zone_name.lower()
-    for key in EVACUATION_TARGETS:
-        if key in name_lower:
-            return key
-    return None
+SYSTEM_PROMPT = """You are the Xaodhang AI Copilot — operational assistant for the Xaodhang Landslide Early Warning System (Team RedBeryl, SIH 2026, MDoNER / SIH26001).
 
+*** LANGUAGE INSTRUCTION — MANDATORY, HIGHEST PRIORITY ***
+{lang_instruction}
+*** END LANGUAGE INSTRUCTION ***
 
-def _build_full_context(db: Session) -> str:
-    """
-    Builds comprehensive situational context injected into every chat call.
-    Includes: current risk, forecast risk, impact data, evacuation targets.
-    Sorted by priority (highest risk first).
-    """
-    zones = db.query(models.Zone).all()
-    if not zones:
-        return "No zones currently monitored."
-
-    zone_summaries = []
-    for zone in zones:
-        rainfall_risk              = compute_rainfall_risk(zone.rainfall_mm_72h)
-        combined_score, risk_level = compute_combined_risk(zone.structural_risk, rainfall_risk)
-        impact                     = get_zone_impact(zone.name)
-        evac_key                   = _match_evac_key(zone.name)
-        evac_target                = EVACUATION_TARGETS.get(evac_key) if evac_key else None
-
-        # Forecast via Open-Meteo — best effort, skip if fails
-        forecast_line = ""
-        try:
-            import httpx as _httpx
-            r = _httpx.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": zone.lat, "longitude": zone.lon,
-                    "hourly": "precipitation", "forecast_days": 3,
-                    "timezone": "Asia/Kolkata",
-                },
-                timeout=5.0,
-            )
-            hourly = r.json().get("hourly", {}).get("precipitation", [])
-            fc72   = round(sum(hourly[:72]), 1)
-            from risk_engine import compute_rainfall_risk as crr, compute_combined_risk as ccr
-            fc_rr  = crr(fc72)
-            _, fc_level = ccr(zone.structural_risk, fc_rr)
-            trend = "↑ WORSENING" if fc_level > risk_level else ("↓ IMPROVING" if fc_level < risk_level else "→ STABLE")
-            forecast_line = f"\n  Forecast (72h): {fc72}mm → {fc_level} {trend}"
-        except Exception:
-            forecast_line = "\n  Forecast: unavailable"
-
-        pop_line  = f"~{impact['population_5km']:,} people within 5km" if impact["population_5km"] else ""
-        road_line = ""
-        fac_line  = ""
-        for item in impact.get("critical_infra", []):
-            if item["type"] == "road":
-                road_line = f"{item['name']} ({item['dist_km']}km)"
-            else:
-                fac_line = f"{item['name']} ({item['type']}, {item['dist_km']}km)"
-
-        evac_line = f"\n  Evacuation → {evac_target['name']}" if evac_target else ""
-
-        zone_summaries.append((combined_score, (
-            f"ZONE: {zone.name}\n"
-            f"  Lat/Lon: {zone.lat:.4f}°N, {zone.lon:.4f}°E\n"
-            f"  Risk Level: {risk_level} | Score: {combined_score:.2f}\n"
-            f"  Terrain Risk: {zone.structural_risk:.2f} | "
-            f"Rainfall 72h: {zone.rainfall_mm_72h:.1f}mm{forecast_line}\n"
-            f"  Population: {pop_line}\n"
-            f"  Nearest road: {road_line}\n"
-            f"  Nearest facility: {fac_line}"
-            f"{evac_line}"
-        )))
-
-    zone_summaries.sort(key=lambda x: x[0], reverse=True)
-    return "\n\n".join(s for _, s in zone_summaries)
-
-
-SYSTEM_PROMPT = """You are the Xaodhang AI Copilot — the operational assistant for the Xaodhang Landslide Early Warning System, built by Team RedBeryl for Smart India Hackathon 2026 (Problem Statement SIH26001, MDoNER).
-
-SYSTEM OVERVIEW:
-Xaodhang monitors landslide risk across Northeast India (NER) using:
-- UNet deep learning model on 10m Sentinel-2 satellite imagery (terrain susceptibility)
-- Open-Meteo ERA5-Land real-time rainfall data (72h accumulation)
-- USGS live earthquake feed (seismic uplift factor)
-- Combined risk formula: Risk = 0.60×Terrain + 0.40×Rainfall + 0.15×(T×R) + seismic
+SYSTEM:
+Risk = 0.60×Terrain + 0.40×Rainfall + 0.15×(Terrain×Rainfall) + seismic uplift
+Data: UNet on Sentinel-2 | Open-Meteo ERA5-Land | USGS earthquake feed
 
 RISK LEVELS:
-- LOW (<0.35): Normal. No action needed.
-- MODERATE (0.35-0.55): Elevated. Monitor closely, prepare teams.
-- HIGH (0.55-0.75): Issue advisory. Pre-position rescue teams. Avoid the slope.
-- CRITICAL (>0.75): EVACUATE NOW. Dispatch teams immediately.
+LOW <35%: routine monitoring
+MODERATE 35-55%: prepare teams, monitor closely
+HIGH 55-75%: issue advisory, pre-position rescue, restrict slope access
+CRITICAL >75%: EVACUATE IMMEDIATELY, dispatch teams now
 
-CURRENT SITUATIONAL PICTURE (live data, sorted by priority):
+LIVE ZONE DATA (highest risk first):
 {zone_context}
 
-YOUR CAPABILITIES:
-You can answer questions about:
-1. Which zones need attention right now and why
-2. Evacuation routes to nearest district HQ for any zone
-3. Population and infrastructure at risk
-4. Whether conditions are expected to improve or worsen
-5. How to prioritize limited response resources across zones
-6. What specific risk scores mean in practical terms
-7. How the AI model and data pipeline works
+RULES:
+- State recommended action FIRST for HIGH/CRITICAL zones
+- Rank by combined score then population when prioritising
+- Give specific evacuation destination when asked about any zone
+- Answers under 150 words unless more is genuinely needed
+- Only discuss: NER landslides, these zones, risk, evacuation, Xaodhang system"""
 
-RESPONSE STYLE:
-- Be direct and operational — this is for disaster managers, not researchers
-- For HIGH/CRITICAL zones always state the recommended action first
-- When asked for priority ordering, rank by combined score then by population impact
-- Keep responses concise but complete — lives may depend on quick decisions
-- If asked about evacuation, give the specific destination from the zone data above
-- Respond in the same language the user writes in
 
-You are NOT a general-purpose assistant. Stay strictly on topic: landslides, risk levels, 
-evacuation, NER zone data, and the Xaodhang system. Politely redirect off-topic questions."""
+def _build_context(db: Session) -> str:
+    """DB-only — zero HTTP calls, instant, never times out."""
+    zones = db.query(models.Zone).all()
+    if not zones:
+        return "No zone data available."
+
+    rows = []
+    for z in zones:
+        rr           = compute_rainfall_risk(z.rainfall_mm_72h or 0)
+        score, level = compute_combined_risk(z.structural_risk or 0, rr)
+        impact       = get_zone_impact(z.name)
+        evac_key     = next((k for k in EVAC_TARGETS if k in z.name.lower()), None)
+        evac         = EVAC_TARGETS[evac_key] if evac_key else "nearest district HQ"
+        pop          = f"~{impact['population_5km']:,} people" if impact["population_5km"] else "pop unknown"
+        road         = next((i["name"] for i in impact.get("critical_infra", []) if i["type"] == "road"), "—")
+        rows.append((score, f"[{level}] {z.name}: {score*100:.0f}% | terrain {z.structural_risk*100:.0f}% | rain {z.rainfall_mm_72h:.0f}mm | {pop} | {road} | evac→{evac}"))
+
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return "\n".join(r for _, r in rows)
 
 
 class ChatRequest(BaseModel):
     message:  str
-    language: str = "en"    # en / hi / as / mni
-    history:  list[dict] = []   # [{role: user|assistant, content: str}] for multi-turn
+    language: str        = "en"
+    history:  list[dict] = []
 
 
 class ChatResponse(BaseModel):
     reply:            str
-    zones_referenced: list[str] = []
-    suggested_action: str | None = None   # e.g. "EVACUATE", "MONITOR", "DEPLOY"
+    zones_referenced: list[str]  = []
+    suggested_action: str | None = None
 
 
 @router.post("", response_model=ChatResponse)
 def chat(req: ChatRequest, db: Session = Depends(get_db)):
-    if not ANTHROPIC_API_KEY:
+    if not GROQ_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY not configured. Add it to Railway environment variables."
+            detail="GROQ_API_KEY not set. Get a free key at console.groq.com and add it to Railway env vars.",
         )
 
-    zone_context = _build_full_context(db)
-    system       = SYSTEM_PROMPT.format(zone_context=zone_context)
+    lang_code = req.language if req.language in LANG_INSTRUCTIONS else "en"
+    system    = SYSTEM_PROMPT.format(
+        lang_instruction=LANG_INSTRUCTIONS[lang_code],
+        zone_context=_build_context(db),
+    )
 
-    lang_suffix = {
-        "hi":  " (कृपया हिंदी में उत्तर दें।)",
-        "as":  " (অনুগ্ৰহ কৰি অসমীয়াত উত্তৰ দিয়ক।)",
-        "mni": " (মেইতেই ভাষাতে উত্তর দিন।)",
-    }.get(req.language, "")
+    messages = [
+        {"role": h["role"], "content": h["content"]}
+        for h in req.history[-6:]
+        if h.get("role") in ("user", "assistant") and h.get("content")
+    ]
+    messages.append({"role": "user", "content": req.message})
 
-    # Build message list — support multi-turn history
-    messages = []
-    for h in req.history[-6:]:   # last 3 turns (6 messages) to keep tokens low
-        if h.get("role") in ("user", "assistant") and h.get("content"):
-            messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": req.message + lang_suffix})
+    reply = None
+    last_error = None
 
-    try:
-        resp = httpx.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key":          ANTHROPIC_API_KEY,
-                "anthropic-version":  "2023-06-01",
-                "content-type":       "application/json",
-            },
-            json={
-                "model":      MODEL,
-                "max_tokens": 600,
-                "system":     system,
-                "messages":   messages,
-            },
-            timeout=25.0,
+    for model in [MODEL_GOOD, MODEL_FAST]:
+        try:
+            resp = httpx.post(
+                GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":       model,
+                    "max_tokens":  600,
+                    "temperature": 0.3,
+                    "messages":    [{"role": "system", "content": system}] + messages,
+                },
+                timeout=20.0,
+            )
+
+            if resp.status_code == 429:
+                last_error = f"Rate limited on {model}"
+                continue   # try fallback model
+
+            resp.raise_for_status()
+            reply = resp.json()["choices"][0]["message"]["content"]
+            break
+
+        except httpx.TimeoutException:
+            last_error = f"Timeout on {model}"
+            continue
+        except httpx.HTTPStatusError as e:
+            last_error = e.response.text[:300]
+            if e.response.status_code == 429:
+                continue
+            # Non-rate-limit error — don't retry
+            raise HTTPException(status_code=502, detail=f"Groq error: {last_error}")
+
+    if reply is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Groq unavailable: {last_error}. Try again in 30 seconds.",
         )
-        resp.raise_for_status()
-        reply = resp.json()["content"][0]["text"]
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Anthropic API error: {e.response.text}")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Chat failed: {e}")
 
-    # Which zones were mentioned?
-    zones             = db.query(models.Zone).all()
-    zones_referenced  = [z.name for z in zones if z.name.split(",")[0].lower() in reply.lower()]
+    zones            = db.query(models.Zone).all()
+    zones_referenced = [z.name for z in zones if z.name.split(",")[0].lower() in reply.lower()]
 
-    # Infer a suggested action from the reply
-    reply_upper       = reply.upper()
-    suggested_action  = None
-    if "EVACUATE" in reply_upper:
-        suggested_action = "EVACUATE"
-    elif "DEPLOY" in reply_upper or "DISPATCH" in reply_upper:
-        suggested_action = "DEPLOY_TEAMS"
-    elif "MONITOR" in reply_upper or "ADVISORY" in reply_upper:
-        suggested_action = "MONITOR"
+    ru = reply.upper()
+    suggested_action = (
+        "EVACUATE"     if "EVACUATE" in ru else
+        "DEPLOY_TEAMS" if ("DEPLOY" in ru or "DISPATCH" in ru) else
+        "MONITOR"      if ("MONITOR" in ru or "ADVISORY" in ru) else
+        None
+    )
 
     return ChatResponse(
         reply=reply,
