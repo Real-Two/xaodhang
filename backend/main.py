@@ -47,9 +47,15 @@ def _auto_seed():
 
 
 def _startup_pipeline():
+    """
+    Runs 10s after startup in a background thread.
+    Staggered: 3s between zones so Open-Meteo never sees a burst.
+    Rainfall uses retry+backoff; GEE failures are soft (zone still shows
+    with structural_risk=0, rainfall fills in correctly).
+    """
     def _run():
         import time
-        time.sleep(5)
+        time.sleep(10)   # wait for server to be fully ready
 
         import fetch_rainfall_openmeteo
         from database import SessionLocal
@@ -62,8 +68,12 @@ def _startup_pipeline():
                 print("[STARTUP] All zones populated — skipping.")
                 return
 
-            print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
-            for zone in blank:
+            print(f"[STARTUP] {len(blank)} blank zones — pipeline starting (staggered 3s)...")
+            for i, zone in enumerate(blank):
+                # Stagger: 3s between each zone to avoid Open-Meteo 429
+                if i > 0:
+                    time.sleep(3)
+
                 try:
                     r = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
                     zone.rainfall_mm_24h     = r["rainfall_mm_24h"]
@@ -80,7 +90,8 @@ def _startup_pipeline():
                     print(f"[STARTUP] Model error {zone.name}: {e}")
 
                 rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-                combined_score, risk_level = compute_combined_risk(zone.structural_risk, rainfall_risk)
+                combined_score, risk_level = compute_combined_risk(
+                    zone.structural_risk, rainfall_risk)
                 db.add(models.RiskHistory(
                     zone_id=zone.id, structural_risk=zone.structural_risk,
                     rainfall_risk=rainfall_risk, combined_score=combined_score,
@@ -134,15 +145,15 @@ def health_check():
         "status": "ok", "team": "RedBeryl", "version": "0.6.0",
         "data_sources": {
             "satellite": "Sentinel-2 via GEE",
-            "rainfall":  "Open-Meteo ERA5-Land (real-time)",
+            "rainfall":  "Open-Meteo ERA5-Land (real-time, retry+backoff)",
             "seismic":   "USGS FDSN (live, 30min cache)",
-            "routing":   "OpenRouteService (if ORS_API_KEY set)",
         },
     }
 
 
 @app.post("/pipeline/run", tags=["pipeline"])
 def run_pipeline(db=Depends(get_db)):
+    import time as _time
     import fetch_rainfall_openmeteo
     from routers.alerts import (ALERT_THRESHOLD_LEVELS, DEFAULT_RECIPIENTS,
                                 _build_message, _get_last_alert_level, _send_fast2sms)
@@ -151,7 +162,10 @@ def run_pipeline(db=Depends(get_db)):
     all_zones = db.query(models.Zone).all()
     summary   = []
 
-    for zone in all_zones:
+    for i, zone in enumerate(all_zones):
+        if i > 0:
+            _time.sleep(2)   # stagger to avoid 429
+
         entry = {"zone_id": zone.id, "zone_name": zone.name,
                  "rainfall": "skipped", "model": "skipped", "alert": "skipped"}
 
