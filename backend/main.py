@@ -49,13 +49,14 @@ def _auto_seed():
 def _startup_pipeline():
     """
     Runs 10s after startup in a background thread.
-    Staggered: 3s between zones so Open-Meteo never sees a burst.
-    Rainfall uses retry+backoff; GEE failures are soft (zone still shows
-    with structural_risk=0, rainfall fills in correctly).
+    Staggered: 3s between zones so Open-Meteo never 429s.
+    Each zone gets its own short-lived DB session — critical with
+    StaticPool, since holding one session for the full 5-minute run
+    would serialize every other request behind it.
     """
     def _run():
         import time
-        time.sleep(10)   # wait for server to be fully ready
+        time.sleep(10)
 
         import fetch_rainfall_openmeteo
         from database import SessionLocal
@@ -63,16 +64,25 @@ def _startup_pipeline():
 
         db = SessionLocal()
         try:
-            blank = [z for z in db.query(models.Zone).all() if z.structural_risk == 0.0]
-            if not blank:
-                print("[STARTUP] All zones populated — skipping.")
-                return
+            blank_ids = [z.id for z in db.query(models.Zone).all() if z.structural_risk == 0.0]
+        finally:
+            db.close()
 
-            print(f"[STARTUP] {len(blank)} blank zones — pipeline starting (staggered 3s)...")
-            for i, zone in enumerate(blank):
-                # Stagger: 3s between each zone to avoid Open-Meteo 429
-                if i > 0:
-                    time.sleep(3)
+        if not blank_ids:
+            print("[STARTUP] All zones populated — skipping.")
+            return
+
+        print(f"[STARTUP] {len(blank_ids)} blank zones — pipeline starting (staggered 3s)...")
+
+        for i, zone_id in enumerate(blank_ids):
+            if i > 0:
+                time.sleep(3)
+
+            db = SessionLocal()
+            try:
+                zone = db.query(models.Zone).filter(models.Zone.id == zone_id).first()
+                if not zone:
+                    continue
 
                 try:
                     r = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
@@ -99,10 +109,10 @@ def _startup_pipeline():
                 ))
                 db.commit()
                 print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
+            finally:
+                db.close()
 
-            print("[STARTUP] Auto-pipeline complete.")
-        finally:
-            db.close()
+        print("[STARTUP] Auto-pipeline complete.")
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -113,7 +123,7 @@ _startup_pipeline()
 app = FastAPI(
     title="Xaodhang — NER Landslide Early Warning API",
     description="RedBeryl / SIH26001. Sentinel-2 → UNet → Open-Meteo → USGS seismic.",
-    version="0.6.0",
+    version="0.7.0",
 )
 
 app.add_middleware(
@@ -142,7 +152,7 @@ app.include_router(evacuation.router)
 @app.get("/", tags=["health"])
 def health_check():
     return {
-        "status": "ok", "team": "RedBeryl", "version": "0.6.0",
+        "status": "ok", "team": "RedBeryl", "version": "0.7.0",
         "data_sources": {
             "satellite": "Sentinel-2 via GEE",
             "rainfall":  "Open-Meteo ERA5-Land (real-time, retry+backoff)",
@@ -164,7 +174,7 @@ def run_pipeline(db=Depends(get_db)):
 
     for i, zone in enumerate(all_zones):
         if i > 0:
-            _time.sleep(2)   # stagger to avoid 429
+            _time.sleep(2)
 
         entry = {"zone_id": zone.id, "zone_name": zone.name,
                  "rainfall": "skipped", "model": "skipped", "alert": "skipped"}

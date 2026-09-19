@@ -5,25 +5,13 @@ GET /scan/ner/stream   — SSE stream, cache-first, non-persisting scan results
 GET /scan/ner/grid     — Grid point definitions only (no inference)
 POST /scan/ner         — Blocking version for scripts/cron
 
-Key design decisions vs v1:
-  1. Scan results are NOT written to the zones table. They are ephemeral —
-     each user's scan is their own session view. Persisting scan points was
-     causing map clutter for all users and polluting the seeded zone list.
+Key design decisions:
+  1. Scan results are NOT written to the zones table — ephemeral, per-session.
      The 10 curated zones remain the only permanent DB entries.
-
-  2. Grid is built per-state with proper coverage, not deduplicated by
-     rounded lat/lon (which was causing Assam's bbox to shadow all other
-     states sharing the same lat range).
-
-  3. Rainfall threshold raised to 200mm/72h for NER context. Cherrapunji
-     averages 11,000mm/year — 100mm/72h is routine monsoon, not extreme.
-     Using 100mm was inflating rainfall_risk to 0.8–1.0 everywhere.
-
-  4. Scan-specific risk scoring uses a more conservative formula than the
-     live zone formula — higher thresholds, lower interaction weight. The
-     seeded zone formula (risk_engine.py) is calibrated for known-dangerous
-     sites; the scan formula needs to discriminate across the full NER
-     landscape where most points are not active slide sites.
+  2. Grid built per-state, no cross-shadowing dedup bug.
+  3. Rainfall via Open-Meteo (matches the rest of the system — was
+     stale-importing fetch_rainfall_chirps before, now fixed).
+  4. Scan-specific conservative risk formula — see thresholds below.
 """
 
 import asyncio
@@ -43,9 +31,6 @@ router = APIRouter(prefix="/scan", tags=["regional-scan"])
 
 GEE_PROJECT = os.environ.get("GEE_PROJECT", "xhaodong-506519")
 
-# ── NER Grid Definition ───────────────────────────────────────────────────────
-# One grid point per 0.5° cell, per state, no cross-state deduplication.
-# Arunachal Pradesh gets 1.0° spacing (it's huge and mostly uninhabited).
 NER_STATE_GRIDS = {
     "Assam":             {"bbox": (24.1, 27.9, 89.7, 96.0),  "step": 0.5},
     "Meghalaya":         {"bbox": (24.9, 26.1, 89.8, 92.8),  "step": 0.5},
@@ -57,16 +42,10 @@ NER_STATE_GRIDS = {
     "Sikkim":            {"bbox": (27.0, 28.2, 88.0, 88.9),  "step": 0.5},
 }
 
-# Scan-specific risk thresholds — more conservative than zone thresholds.
-# NER monsoon context: 200mm/72h is genuinely heavy; 100mm is routine.
 SCAN_RAINFALL_THRESHOLD_MM = 200.0
-
-# Structural weight slightly higher than rainfall for scan — terrain
-# susceptibility is the stable signal; rainfall varies daily and shouldn't
-# alone push a grid cell to HIGH across a 55km² area.
-SCAN_STRUCTURAL_WEIGHT = 0.65
-SCAN_RAINFALL_WEIGHT   = 0.35
-SCAN_INTERACTION_WEIGHT = 0.15   # lower interaction bonus vs zone formula
+SCAN_STRUCTURAL_WEIGHT     = 0.65
+SCAN_RAINFALL_WEIGHT       = 0.35
+SCAN_INTERACTION_WEIGHT    = 0.15
 
 SCAN_RISK_LEVELS = [
     (0.75, "CRITICAL"),
@@ -77,22 +56,11 @@ SCAN_RISK_LEVELS = [
 
 
 def _build_ner_grid():
-    """
-    Generates grid points per state. Points in overlapping bboxes (border
-    areas) appear once per state they belong to — the scan table shows state
-    attribution clearly, so this is correct behaviour (a point on the
-    Assam-Meghalaya border is relevant to both states' DM offices).
-
-    Global deduplication by exact (lat4, lon4) to avoid running GEE twice
-    for the exact same coordinate when two state bboxes genuinely share it.
-    """
     seen_coords = set()
     points = []
-
     for state, cfg in NER_STATE_GRIDS.items():
         lat_min, lat_max, lon_min, lon_max = cfg["bbox"]
         step = cfg["step"]
-
         lat = lat_min
         while lat <= lat_max + 1e-6:
             lon = lon_min
@@ -101,14 +69,12 @@ def _build_ner_grid():
                 if key not in seen_coords:
                     seen_coords.add(key)
                     points.append({
-                        "lat":   round(lat, 4),
-                        "lon":   round(lon, 4),
+                        "lat": round(lat, 4), "lon": round(lon, 4),
                         "state": state,
-                        "name":  f"{state} ({lat:.1f}°N {lon:.1f}°E)",
+                        "name": f"{state} ({lat:.1f}°N {lon:.1f}°E)",
                     })
                 lon = round(lon + step, 4)
             lat = round(lat + step, 4)
-
     return points
 
 
@@ -116,12 +82,10 @@ NER_GRID = _build_ner_grid()
 
 
 def _scan_rainfall_risk(rainfall_mm_72h: float) -> float:
-    """NER-calibrated rainfall risk: linear ramp to 200mm threshold."""
     return max(0.0, min(1.0, rainfall_mm_72h / SCAN_RAINFALL_THRESHOLD_MM))
 
 
 def _scan_combined_risk(structural: float, rainfall: float):
-    """Conservative scan formula — see module docstring for rationale."""
     s = max(0.0, min(1.0, structural))
     r = max(0.0, min(1.0, rainfall))
     base = SCAN_STRUCTURAL_WEIGHT * s + SCAN_RAINFALL_WEIGHT * r
@@ -135,8 +99,6 @@ def _scan_combined_risk(structural: float, rainfall: float):
     return round(score, 4), level
 
 
-# ── Grid info endpoint ────────────────────────────────────────────────────────
-
 @router.get("/ner/grid")
 def get_ner_grid():
     return {
@@ -146,23 +108,18 @@ def get_ner_grid():
     }
 
 
-# ── Core per-point inference (ephemeral — no DB write) ────────────────────────
-
 def _run_scan_point(lat: float, lon: float, name: str) -> dict:
-    """
-    Runs GEE → UNet → CHIRPS for one scan point.
-    Returns a result dict. DOES NOT write to DB.
-    On GEE failure returns a zero-score result with an error flag so the
-    scan continues rather than dying.
-    """
+    """Runs GEE → UNet → Open-Meteo for one scan point. Never writes to DB."""
     try:
         import fetch_real_patch
-        import fetch_rainfall_chirps
+        import fetch_rainfall_openmeteo
+        from gee_auth import initialize_gee
         from ml_service import StructuralRiskModel
 
         model = StructuralRiskModel()
 
         try:
+            initialize_gee(GEE_PROJECT)
             patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
             prediction = model.predict(patch)
             structural = prediction["risk_score"]
@@ -171,7 +128,7 @@ def _run_scan_point(lat: float, lon: float, name: str) -> dict:
             structural = 0.0
 
         try:
-            rainfall_data = fetch_rainfall_chirps.fetch_rainfall(lat, lon, GEE_PROJECT)
+            rainfall_data = fetch_rainfall_openmeteo.fetch_rainfall(lat, lon)
             rain72 = rainfall_data.get("rainfall_mm_72h", 0.0)
         except Exception:
             rain72 = 0.0
@@ -202,8 +159,6 @@ def _run_scan_point(lat: float, lon: float, name: str) -> dict:
         }
 
 
-# ── SSE streaming scan ────────────────────────────────────────────────────────
-
 async def _scan_generator(concurrency: int = 3) -> AsyncGenerator[str, None]:
     total = len(NER_GRID)
     yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
@@ -231,7 +186,7 @@ async def _scan_generator(concurrency: int = 3) -> AsyncGenerator[str, None]:
             yield msg
             scanned += 1
 
-        await asyncio.sleep(0)   # flush SSE buffer
+        await asyncio.sleep(0)
 
     elapsed = (datetime.datetime.utcnow() - start).total_seconds()
     yield f"data: {json.dumps({'type': 'complete', 'total_scanned': scanned, 'elapsed_s': round(elapsed, 1)})}\n\n"
@@ -239,7 +194,6 @@ async def _scan_generator(concurrency: int = 3) -> AsyncGenerator[str, None]:
 
 @router.get("/ner/stream")
 async def scan_ner_stream(concurrency: int = 3):
-    """SSE — scan results stream as they complete. Results are NOT persisted."""
     return StreamingResponse(
         _scan_generator(concurrency=concurrency),
         media_type="text/event-stream",
@@ -247,11 +201,8 @@ async def scan_ner_stream(concurrency: int = 3):
     )
 
 
-# ── Blocking scan ─────────────────────────────────────────────────────────────
-
 @router.post("/ner")
 def scan_ner_blocking(db: Session = Depends(get_db)):
-    """Blocking NER scan — for scripts/cron. Results not persisted."""
     results = []
     for point in NER_GRID:
         r = _run_scan_point(point["lat"], point["lon"], point["name"])
