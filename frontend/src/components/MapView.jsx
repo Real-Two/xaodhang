@@ -204,7 +204,7 @@ function LivePipelineBanner() {
 
   const stageDescriptions = {
     satellite: '🛰 Fetching Sentinel-2 (10m) & JAXA AW3D30 Elevation...',
-    model: '🧠 DeepLabv3+ Multi-Scale Spatial Segmentation Inference...',
+    model: '🧠 U-Net Multi-Scale Spatial Segmentation Inference...',
     rainfall: '🌧 Querying CHIRPS 72h Precipitation Accumulation...',
   };
 

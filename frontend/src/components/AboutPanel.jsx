@@ -30,13 +30,13 @@ export default function AboutPanel() {
           {/* Two Layer Architecture Diagram Banner */}
           <div className="about-model-box glass-card">
             <h3 className="about-model-box__title">
-              🧠 DeepLabv3+ Multi-Scale Spatial Segmentation Pipeline
+              🧠 U-Net Multi-Scale Spatial Segmentation Pipeline
             </h3>
             <p className="about-model-box__desc">
-              The core geological susceptibility model has been migrated from our initial baseline U-Net (val IoU 0.1962, first run) to a DeepLabv3+ architecture with Atrous Spatial Pyramid Pooling (ASPP). This allows multi-scale feature capture over steep Himalayan mountain contours and varied slope textures.
+              The core geological susceptibility model has been migrated from our initial baseline U-Net (val IoU 0.1962, first run) to a U-Net architecture with Atrous Spatial Pyramid Pooling (ASPP). This allows multi-scale feature capture over steep Himalayan mountain contours and varied slope textures.
             </p>
             <div className="about-model-tags">
-              <span className="badge badge--neutral">Architecture: DeepLabv3+</span>
+              <span className="badge badge--neutral">Architecture: U-Net</span>
               <span className="badge badge--neutral">Resolution: 10m/pixel</span>
               <span className="badge badge--neutral">Format: ONNX Runtime Engine</span>
               <span className="badge badge--neutral">Patch Dimension: 128×128px (1.28km²)</span>
@@ -93,7 +93,7 @@ export default function AboutPanel() {
               📐 Multi-Criteria Risk Formula
             </h4>
             <div className="about-formula-code">
-              <code>Combined Risk = 0.60 × Susceptibility (DeepLabv3+) + 0.40 × RainfallTrigger (CHIRPS) + 0.10 × (Susceptibility × RainfallTrigger)</code>
+              <code>Combined Risk = 0.60 × Susceptibility (U-Net) + 0.40 × RainfallTrigger (CHIRPS) + 0.10 × (Susceptibility × RainfallTrigger)</code>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 8 }}>
               This formulation ensures that a high terrain vulnerability alone does not trigger a false alarm during dry seasons, while heavy monsoon precipitation on fragile slopes generates immediate critical warning alerts.

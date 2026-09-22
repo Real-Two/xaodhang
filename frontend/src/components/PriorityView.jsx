@@ -75,7 +75,7 @@ export default function PriorityView({ onInspectZone, onLocateOnMap }) {
         <div className="priority-view__header-left">
           <h1 className="priority-view__title">Landslide Hazard Priority Triage</h1>
           <p className="priority-view__subtitle">
-            Ranked monitoring list ordered by multi-criteria risk index (DeepLabv3+ Terrain Susceptibility × CHIRPS Precipitation Trigger).
+            Ranked monitoring list ordered by multi-criteria risk index (U-Net Terrain Susceptibility × CHIRPS Precipitation Trigger).
           </p>
         </div>
         <div className="priority-view__header-actions">
@@ -192,7 +192,7 @@ export default function PriorityView({ onInspectZone, onLocateOnMap }) {
                       <span style={{ fontWeight: 600, color: structScore > 65 ? 'var(--risk-critical)' : 'var(--text-secondary)' }}>
                         {structScore.toFixed(1)}%
                       </span>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6 }}>DeepLabv3+</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6 }}>U-Net</span>
                     </td>
                     <td>
                       <span style={{ color: rainMm > 60 ? 'var(--brand-orange)' : 'var(--text-secondary)' }}>
