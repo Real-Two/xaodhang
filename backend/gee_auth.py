@@ -26,6 +26,8 @@ import tempfile
 
 try:
     import ee
+    import socket
+    socket.setdefaulttimeout(45)
     _EE_AVAILABLE = True
 except ImportError:
     _EE_AVAILABLE = False
