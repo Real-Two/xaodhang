@@ -32,8 +32,10 @@ try:
 except ImportError:
     _EE_AVAILABLE = False
 
-_initialized = False   # module-level flag — only auth once per process
+import threading
 
+_initialized = False   # module-level flag — only auth once per process
+_auth_lock = threading.Lock()
 
 def initialize_gee(project: str):
     global _initialized
@@ -46,6 +48,11 @@ def initialize_gee(project: str):
 
     if _initialized:
         return  # already authed in this process — skip
+
+    with _auth_lock:
+        if _initialized:
+            return
+
 
     service_account_json = os.environ.get("GEE_SERVICE_ACCOUNT_JSON", "").strip()
 

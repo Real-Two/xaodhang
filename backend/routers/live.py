@@ -75,12 +75,12 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
             )
         # GEE downloads and ONNX inference are memory-heavy.  Render's
         # starter instance cannot safely run two of them at once.
-        with prediction_lock:
-            try:
-                patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
-            except RuntimeError as e:
-                raise HTTPException(status_code=502, detail=f"Satellite fetch failed: {e}")
+        try:
+            patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
+        except RuntimeError as e:
+            raise HTTPException(status_code=502, detail=f"Satellite fetch failed: {e}")
 
+        with prediction_lock:
             prediction      = model.predict(patch)
             mask_png_base64 = prediction["mask_png_base64"]
 

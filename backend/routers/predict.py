@@ -49,10 +49,11 @@ def _run_model_for_zone(zone: models.Zone, db: Session) -> schemas.PredictOut:
             detail="earthengine-api not installed — cannot auto-fetch patches."
         )
     try:
+        from gee_auth import initialize_gee
+        initialize_gee(GEE_PROJECT)
+        patch = fetch_real_patch.fetch_patch(zone.lat, zone.lon, GEE_PROJECT)
+        
         with prediction_lock:
-            from gee_auth import initialize_gee
-            initialize_gee(GEE_PROJECT)
-            patch = fetch_real_patch.fetch_patch(zone.lat, zone.lon, GEE_PROJECT)
             model = get_model()
             result = model.predict(patch)
     except RuntimeError as e:
