@@ -58,7 +58,7 @@ async function request(method, path, options = {}) {
 
 // ── Zones ────────────────────────────────────────────────────────────────────
 
-/** GET /zones → array of all 10 seeded zone summaries */
+/** GET /zones → array of all seeded zone summaries */
 export async function getZones() {
   return request('GET', '/zones');
 }
@@ -72,7 +72,6 @@ export async function createZone(data) {
 
 /**
  * GET /risk/all → combined risk scores for all zones, sorted highest first.
- * Returns combined_score, risk_level, structural_risk, rainfall_risk per zone.
  */
 export async function getRiskAll() {
   return request('GET', '/risk/all');
@@ -87,7 +86,6 @@ export async function getRisk(id) {
 
 /**
  * GET /forecast/{zone_id} → 72-hour predicted risk via Open-Meteo weather model.
- * Returns hourly forecasted rainfall and risk scores for the next 3 days.
  */
 export async function getForecast(id) {
   return request('GET', `/forecast/${id}`);
@@ -96,38 +94,81 @@ export async function getForecast(id) {
 // ── History ───────────────────────────────────────────────────────────────────
 
 /**
- * GET /history/{zone_id} → 7-day risk trend data for charts.
- * Provides historical combined_score, structural_risk, rainfall_risk per day.
+ * GET /history/{zone_id}?limit=N → risk trend data for charts.
  */
-export async function getHistory(id) {
-  return request('GET', `/history/${id}`);
+export async function getHistory(id, limit = 28) {
+  return request('GET', `/history/${id}?limit=${limit}`);
+}
+
+/**
+ * GET /history/{zone_id}/summary?days=N → 7-day summary with trend direction.
+ */
+export async function getHistorySummary(id, days = 7) {
+  return request('GET', `/history/${id}/summary?days=${days}`);
 }
 
 // ── Live Prediction (Map Click) ───────────────────────────────────────────────
 
 /**
- * POST /predict/live
+ * GET /predict/live?lat={lat}&lon={lon}
  * On-demand risk prediction for any arbitrary coordinate.
- * GEE satellite fetch + DeepLabv3+ model + CHIRPS rainfall — takes 5–10s.
- *
- * Request body: { lat: number, lon: number }
- * Response (LiveRiskOut):
- *   { zone_id, zone_name, lat, lon, structural_risk, rainfall_risk,
- *     combined_score, risk_level, mask_png_base64, cached, source }
- *
- * Note: rainfall_mm_24h/48h/72h are NOT returned by /predict/live.
- * They come from /risk/all (seeded zones only).
  */
 export async function predictLive(lat, lon, signal) {
-  return request('POST', '/predict/live', { body: { lat, lon }, signal });
+  return request('GET', `/predict/live?lat=${lat}&lon=${lon}`, { signal });
 }
 
+/**
+ * Stream a live prediction so Render sees activity while GEE is fetching the
+ * satellite patch. Resolves with the same object as predictLive.
+ */
+export async function predictLiveStream(lat, lon, signal, onEvent = () => {}) {
+  const res = await fetch(`${BASE_URL}/predict/live/stream?lat=${lat}&lon=${lon}`, {
+    method: 'GET',
+    signal,
+    cache: 'no-store',
+    headers: { Accept: 'text/event-stream' },
+  });
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status, `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    let boundary;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const payload = frame
+        .split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('');
+      if (!payload) continue;
+
+      const event = JSON.parse(payload);
+      onEvent(event);
+      if (event.type === 'result') return event.result;
+      if (event.type === 'error') throw new ApiError(502, event.detail || 'Live prediction failed.');
+    }
+
+    if (done) break;
+  }
+
+  throw new Error('Prediction stream ended before a result was returned.');
+}
 
 // ── Structural Prediction ─────────────────────────────────────────────────────
 
 /**
  * POST /predict/structural/{id}
- * Upload a satellite patch (.npy / .h5) to run DeepLabv3+ locally.
+ * Upload a satellite patch (.npy / .h5) to run inference locally.
  */
 export async function predictStructural(id, file) {
   const fd = new FormData();
@@ -151,7 +192,6 @@ export async function getReports() {
 
 /**
  * POST /reports (multipart)
- * @param {{ lat, lon, description, photo?: File, officer_name?: string }} data
  */
 export async function postReport({ lat, lon, description, photo, officer_name }) {
   const fd = new FormData();
@@ -167,8 +207,6 @@ export async function postReport({ lat, lon, description, photo, officer_name })
 
 /**
  * POST /chat → AI chatbot endpoint.
- * @param {string} message  User's question about landslide risk
- * @returns {{ response: string }}
  */
 export async function postChat(message) {
   return request('POST', '/chat', { body: { message } });
@@ -178,22 +216,33 @@ export async function postChat(message) {
 
 /**
  * GET /alerts/log → historical alert log.
- * Returns an array of past triggered HIGH/CRITICAL zone alerts.
  */
 export async function getAlertsLog() {
   return request('GET', '/alerts/log');
 }
 
-// ── Geocoding (OSM Nominatim, NER-restricted) ─────────────────────────────────
-
-// viewbox = left,top,right,bottom (lon/lat) — NER bounding box
-const NER_VIEWBOX = '88.0,29.6,97.5,21.5';
+// ── NER Regional Scan ─────────────────────────────────────────────────────────
 
 /**
- * geocodeSearch — free Nominatim lookup restricted to Northeast India.
- * Callers must debounce (~1 req/sec per Nominatim policy).
- * https://operations.osmfoundation.org/policies/nominatim/
+ * GET /scan/ner/grid → returns the full grid of points to be scanned (no inference).
+ * Useful to preview scan coverage before starting.
  */
+export async function getScanGrid() {
+  return request('GET', '/scan/ner/grid');
+}
+
+/**
+ * POST /scan/ner → blocking full NER scan (for scripts/cron, not the live UI).
+ * For the live streaming UI, connect directly to /scan/ner/stream via fetch+ReadableStream.
+ */
+export async function runScanBlocking() {
+  return request('POST', '/scan/ner');
+}
+
+// ── Geocoding (OSM Nominatim, NER-restricted) ─────────────────────────────────
+
+const NER_VIEWBOX = '88.0,29.6,97.5,21.5';
+
 export async function geocodeSearch(query, signal) {
   if (!query || query.trim().length < 3) return [];
 

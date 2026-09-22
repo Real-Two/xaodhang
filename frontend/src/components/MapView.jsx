@@ -322,7 +322,14 @@ export default function MapView({ mapRef }) {
             <React.Fragment key={zone.id}>
               <EnhancedZoneMarker
                 zone={zone}
-                onSelect={(z) => actions.setSelectedZone(z)}
+                onSelect={(z) => {
+                  // Seeded zones are present immediately after a deploy, but
+                  // a missing timestamp means they have not received a UNet
+                  // result yet.  Request that one zone rather than displaying
+                  // a misleading permanent 0.0% value.
+                  if (!z.structural_updated_at) queryPoint(z.lat, z.lon);
+                  else actions.setSelectedZone(z);
+                }}
               />
               {/* Heatmap overlay for pre-calculated zone if available */}
               {!state.bandwidthMode && state.layers.heatmap && state.structuralResults[zone.id]?.mask_png_base64 && (

@@ -4,12 +4,10 @@ import { normalizeRiskLevel } from './RiskCard';
 
 /**
  * NavigationSidebar — Slim icon-only left navigation bar.
- * Gives the application a clean, modern SaaS visual hierarchy.
  */
 export default function NavigationSidebar() {
   const { state, actions } = useApp();
 
-  // Count active warnings (Critical + High)
   const activeAlertsCount = state.zones.filter(z => {
     const lvl = normalizeRiskLevel(z.risk_level);
     return lvl === 'CRITICAL' || lvl === 'HIGH';
@@ -58,6 +56,32 @@ export default function NavigationSidebar() {
             <line x1="6" y1="20" x2="6" y2="14" />
           </svg>
           <span className="nav-sidebar__tooltip">Priority List</span>
+        </button>
+
+        {/* NER Regional Scan — NEW */}
+        <button
+          className={`nav-sidebar__item ${state.currentView === 'scan' ? 'nav-sidebar__item--active' : ''}`}
+          onClick={() => actions.setView('scan')}
+          title="NER Regional Scan — full satellite sweep of all 8 states"
+          aria-label="NER Regional Scan"
+          style={{ position: 'relative' }}
+        >
+          {/* Satellite dish icon */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+            <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+            <circle cx="12" cy="12" r="2" />
+            <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+            <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+          </svg>
+          {/* Subtle orange pip to signal this is an action-view */}
+          <span style={{
+            position: 'absolute', top: 6, right: 6,
+            width: 6, height: 6, borderRadius: '50%',
+            background: state.currentView === 'scan' ? 'var(--brand-orange)' : 'transparent',
+            transition: 'background 0.2s',
+          }} />
+          <span className="nav-sidebar__tooltip">NER Scan</span>
         </button>
 
         {/* Citizen Field Reports */}

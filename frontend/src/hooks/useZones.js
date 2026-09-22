@@ -8,7 +8,7 @@ const MAX_CONSECUTIVE_FAILURES = 2; // require 2 consecutive ping failures befor
 /**
  * useZones — fetches GET /risk/all on mount and polls every 90s.
  *
- * /risk/all returns all 10 seeded zones with real combined_score, risk_level,
+ * /risk/all returns all seeded zones with real combined_score, risk_level,
  * structural_risk, rainfall_risk, and rainfall_mm_* already computed server-side.
  * No client-side enrichment needed.
  *
@@ -55,6 +55,7 @@ export function useZones() {
       }
 
       const raw = await getRiskAll();
+      actions.setBackendStatus(true);
       const rawArr = Array.isArray(raw) ? raw : [];
 
       // Normalize: /risk/all uses zone_id; the rest of the app uses id

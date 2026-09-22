@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useMemo, useRef } from 'react';
 
 // ── Initial State ─────────────────────────────────────────────────────────────
 
@@ -145,30 +145,35 @@ export function AppProvider({ children }) {
   // prop-drilling. MapView attaches this to <MapContainer ref={mapRef}>.
   const mapRef = useRef(null);
 
-  const actions = {
-    setView: useCallback(v => dispatch({ type: 'SET_VIEW', payload: v }), []),
-    setSearchQuery: useCallback(q => dispatch({ type: 'SET_SEARCH_QUERY', payload: q }), []),
-    setFilterLevel: useCallback(lvl => dispatch({ type: 'SET_FILTER_LEVEL', payload: lvl }), []),
-    setSelectedZone: useCallback(z => dispatch({ type: 'SET_SELECTED_ZONE', payload: z }), []),
-    mergeSelectedZone: useCallback(p => dispatch({ type: 'MERGE_SELECTED_ZONE', payload: p }), []),
-    clearSelectedZone: useCallback(() => dispatch({ type: 'CLEAR_SELECTED_ZONE' }), []),
-    openModal: useCallback(m => dispatch({ type: 'OPEN_MODAL', payload: m }), []),
-    closeModal: useCallback(() => dispatch({ type: 'CLOSE_MODAL' }), []),
-    setZones: useCallback(z => dispatch({ type: 'SET_ZONES', payload: z }), []),
-    setReports: useCallback(r => dispatch({ type: 'SET_REPORTS', payload: r }), []),
-    addReport: useCallback(r => dispatch({ type: 'ADD_REPORT', payload: r }), []),
-    setLiveQuery: useCallback(p => dispatch({ type: 'SET_LIVE_QUERY', payload: p }), []),
-    resetLiveQuery: useCallback(() => dispatch({ type: 'RESET_LIVE_QUERY' }), []),
-    toggleBandwidth: useCallback(() => dispatch({ type: 'TOGGLE_BANDWIDTH' }), []),
-    toggleLayer: useCallback(layer => dispatch({ type: 'TOGGLE_LAYER', payload: layer }), []),
-    setBackendStatus: useCallback(s => dispatch({ type: 'SET_BACKEND_STATUS', payload: s }), []),
-    setStructuralResult: useCallback((zoneId, result) =>
-      dispatch({ type: 'SET_STRUCTURAL_RESULT', payload: { zoneId, result } }), []),
-    updateZoneRisk: useCallback(r => dispatch({ type: 'UPDATE_ZONE_RISK', payload: r }), []),
-  };
+  const actions = useMemo(() => ({
+    setView: v => dispatch({ type: 'SET_VIEW', payload: v }),
+    setSearchQuery: q => dispatch({ type: 'SET_SEARCH_QUERY', payload: q }),
+    setFilterLevel: lvl => dispatch({ type: 'SET_FILTER_LEVEL', payload: lvl }),
+    setSelectedZone: z => dispatch({ type: 'SET_SELECTED_ZONE', payload: z }),
+    mergeSelectedZone: p => dispatch({ type: 'MERGE_SELECTED_ZONE', payload: p }),
+    clearSelectedZone: () => dispatch({ type: 'CLEAR_SELECTED_ZONE' }),
+    openModal: m => dispatch({ type: 'OPEN_MODAL', payload: m }),
+    closeModal: () => dispatch({ type: 'CLOSE_MODAL' }),
+    setZones: z => dispatch({ type: 'SET_ZONES', payload: z }),
+    setReports: r => dispatch({ type: 'SET_REPORTS', payload: r }),
+    addReport: r => dispatch({ type: 'ADD_REPORT', payload: r }),
+    setLiveQuery: p => dispatch({ type: 'SET_LIVE_QUERY', payload: p }),
+    resetLiveQuery: () => dispatch({ type: 'RESET_LIVE_QUERY' }),
+    toggleBandwidth: () => dispatch({ type: 'TOGGLE_BANDWIDTH' }),
+    toggleLayer: layer => dispatch({ type: 'TOGGLE_LAYER', payload: layer }),
+    setBackendStatus: s => dispatch({ type: 'SET_BACKEND_STATUS', payload: s }),
+    setStructuralResult: (zoneId, result) =>
+      dispatch({ type: 'SET_STRUCTURAL_RESULT', payload: { zoneId, result } }),
+    updateZoneRisk: r => dispatch({ type: 'UPDATE_ZONE_RISK', payload: r }),
+  }), [dispatch]);
+  // dispatch is stable across the component's lifetime (guaranteed by React),
+  // so this object is created exactly once and never triggers a re-render loop
+  // in consumers whose effects depend on `actions` or a callback derived from it.
+
+  const value = useMemo(() => ({ state, actions, mapRef }), [state, actions]);
 
   return (
-    <AppContext.Provider value={{ state, actions, mapRef }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   );

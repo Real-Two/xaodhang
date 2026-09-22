@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from routers import (alerts, chatbot, forecast, history, live, predict,
-                     rainfall, reports, zones)
+                     rainfall, reports, zones, scan)
 
 # Create all DB tables
 Base.metadata.create_all(bind=engine)
@@ -72,60 +72,53 @@ def _startup_pipeline():
 
         from database import SessionLocal
         from routers.predict import _run_model_for_zone
-        from routers.rainfall import _do_gee_fetch
+        from routers.rainfall import refresh_rainfall_batch
 
         db = SessionLocal()
         try:
             all_zones = db.query(models.Zone).all()
 
-            # Zones needing structural risk (model never ran)
-            needs_model = [z for z in all_zones if z.structural_risk == 0.0]
-            # Zones needing rainfall (GEE fetch never ran)
+            # Zones needing rainfall (Open-Meteo fetch never ran)
             needs_rainfall = [z for z in all_zones
                               if z.rainfall_updated_at is None]
+            if not needs_rainfall:
+                print("[STARTUP] All zones have rainfall — skipping refresh.")
+            else:
+                print(f"[STARTUP] {len(needs_rainfall)} zones need rainfall — refreshing...")
+                try:
+                    refresh_rainfall_batch(needs_rainfall, db)
+                    for z in needs_rainfall:
+                        print(f"[STARTUP] Rainfall OK: {z.name} → 72h={z.rainfall_mm_72h:.1f}mm")
+                except Exception as e:
+                    print(f"[STARTUP] Rainfall refresh failed: {e}")
 
-            if not needs_model and not needs_rainfall:
-                print("[STARTUP] All zones populated — skipping auto-pipeline.")
-                return
-
-            print(f"[STARTUP] {len(needs_model)} zones need model, "
-                  f"{len(needs_rainfall)} zones need rainfall — running pipeline...")
-
-            # Run model for zones that need it
-            for zone in needs_model:
+            # Populate only missing structural records, sequentially.
+            unscored = [z for z in db.query(models.Zone).all()
+                        if z.structural_updated_at is None]
+            for zone in unscored:
                 try:
                     _run_model_for_zone(zone, db)
-                    print(f"[STARTUP] Model OK: {zone.name} → {zone.structural_risk:.6f}")
+                    print(f"[STARTUP] Terrain scored: {zone.name} → {zone.structural_risk:.6f}")
                 except Exception as e:
-                    print(f"[STARTUP] Model error {zone.name}: {e}")
+                    print(f"[STARTUP] Terrain error {zone.name}: {e}")
 
-            # Fetch rainfall for zones that need it
-            for zone in needs_rainfall:
-                try:
-                    _do_gee_fetch(zone, db)
-                    print(f"[STARTUP] Rainfall OK: {zone.name} → "
-                          f"72h={zone.rainfall_mm_72h:.1f}mm")
-                except Exception as e:
-                    print(f"[STARTUP] Rainfall error {zone.name}: {e}")
-
-            # Log combined risk for ALL zones that were updated
-            updated_zones = set(z.id for z in needs_model) | set(z.id for z in needs_rainfall)
-            for zone in all_zones:
-                if zone.id in updated_zones:
-                    rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-                    combined_score, risk_level = compute_combined_risk(
-                        zone.structural_risk, rainfall_risk)
-
-                    db.add(models.RiskHistory(
-                        zone_id=zone.id,
-                        structural_risk=zone.structural_risk,
-                        rainfall_risk=rainfall_risk,
-                        combined_score=combined_score,
-                        risk_level=risk_level,
-                        recorded_at=datetime.datetime.utcnow(),
-                    ))
-                    db.commit()
-                    print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
+            # Log combined risk for updated zones
+            updated_ids = set(z.id for z in needs_rainfall) | set(z.id for z in unscored)
+            if updated_ids:
+                for zone in db.query(models.Zone).all():
+                    if zone.id in updated_ids:
+                        rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
+                        combined_score, risk_level = compute_combined_risk(
+                            zone.structural_risk, rainfall_risk)
+                        db.add(models.RiskHistory(
+                            zone_id=zone.id,
+                            structural_risk=zone.structural_risk,
+                            rainfall_risk=rainfall_risk,
+                            combined_score=combined_score,
+                            risk_level=risk_level,
+                            recorded_at=datetime.datetime.utcnow(),
+                        ))
+                db.commit()
 
             print("[STARTUP] Auto-pipeline complete.")
         finally:
@@ -145,7 +138,7 @@ app = FastAPI(
         "risk + CHIRPS rainfall trigger. Covers 10 seeded NER zones and any "
         "arbitrary coordinate via /predict/live."
     ),
-    version="0.3.1",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -167,6 +160,7 @@ app.include_router(forecast.router)
 app.include_router(alerts.router)
 app.include_router(chatbot.router)
 app.include_router(history.router)
+app.include_router(scan.router)
 
 
 @app.get("/", tags=["health"])
@@ -175,12 +169,13 @@ def health_check():
         "status": "ok",
         "service": "Xaodhang NER Landslide Early Warning API",
         "team": "RedBeryl",
-        "version": "0.3.1",
+        "version": "0.4.0",
         "features": [
             "structural-risk", "rainfall-trigger", "combined-risk-engine",
             "72h-forecast", "multilingual-sms-alerts", "ai-chatbot",
             "risk-history", "citizen-reporting", "live-prediction",
             "pipeline-run", "auto-startup-pipeline",
+            "ner-regional-scan",   # NEW
         ],
     }
 
@@ -198,7 +193,7 @@ def run_pipeline(db=Depends(get_db)):
                                 _build_message, _get_last_alert_level,
                                 _send_fast2sms)
     from routers.predict import _run_model_for_zone
-    from routers.rainfall import _do_gee_fetch
+    from routers.rainfall import _do_rainfall_fetch
 
     all_zones = db.query(models.Zone).all()
     summary = []
@@ -213,7 +208,7 @@ def run_pipeline(db=Depends(get_db)):
         }
 
         try:
-            _do_gee_fetch(zone, db)
+            _do_rainfall_fetch(zone, db)
             entry["rainfall"] = "ok"
         except Exception as e:
             entry["rainfall"] = f"error: {e}"

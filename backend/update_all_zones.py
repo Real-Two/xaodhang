@@ -37,16 +37,15 @@ from risk_engine import compute_combined_risk, compute_rainfall_risk
 # Make sure new tables exist
 Base.metadata.create_all(bind=engine)
 
-GEE_PROJECT = os.environ.get("GEE_PROJECT", "xhaodong-506519")
 ALERT_LEVELS = {"HIGH", "CRITICAL"}
 DEFAULT_RECIPIENTS = os.environ.get("ALERT_RECIPIENTS", "").split(",")
 
 # Try importing GEE fetch scripts — skip gracefully if GEE auth isn't available
 try:
-    import fetch_rainfall_chirps
-    GEE_AVAILABLE = True
+    import fetch_rainfall_openmeteo
+    RAINFALL_AVAILABLE = True
 except ImportError:
-    GEE_AVAILABLE = False
+    RAINFALL_AVAILABLE = False
     print("[WARN] fetch_rainfall_chirps not importable — rainfall will not be updated")
 
 
@@ -104,9 +103,9 @@ def run_once(db: Session):
         print(f"  → {zone.name} (id={zone.id})")
 
         # Step 1: Fetch rainfall from GEE/CHIRPS
-        if GEE_AVAILABLE:
+        if RAINFALL_AVAILABLE:
             try:
-                rainfall = fetch_rainfall_chirps.fetch_rainfall(zone.lat, zone.lon, GEE_PROJECT)
+                rainfall = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
                 zone.rainfall_mm_24h = rainfall.get("rainfall_mm_24h", zone.rainfall_mm_24h)
                 zone.rainfall_mm_48h = rainfall.get("rainfall_mm_48h", zone.rainfall_mm_48h)
                 zone.rainfall_mm_72h = rainfall.get("rainfall_mm_72h", zone.rainfall_mm_72h)
