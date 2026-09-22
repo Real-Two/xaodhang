@@ -23,6 +23,7 @@ Usage:
 import os
 import json
 import tempfile
+import threading
 
 try:
     import ee
@@ -31,8 +32,6 @@ try:
     _EE_AVAILABLE = True
 except ImportError:
     _EE_AVAILABLE = False
-
-import threading
 
 _initialized = False   # module-level flag — only auth once per process
 _auth_lock = threading.Lock()
@@ -53,57 +52,56 @@ def initialize_gee(project: str):
         if _initialized:
             return
 
+        service_account_json = os.environ.get("GEE_SERVICE_ACCOUNT_JSON", "").strip()
 
-    service_account_json = os.environ.get("GEE_SERVICE_ACCOUNT_JSON", "").strip()
-
-    if service_account_json:
-        # --- Cloud / Railway path ---
-        # Full JSON content is in the env var.
-        # Write to a temp file so ADC and ee.ServiceAccountCredentials both work.
-        try:
-            key_data = json.loads(service_account_json)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(
-                f"GEE_SERVICE_ACCOUNT_JSON is set but is not valid JSON: {e}\n"
-                "Make sure you pasted the entire JSON file contents, not just the path."
-            )
-
-        # Write temp credentials file
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, prefix="gee_sa_"
-        )
-        json.dump(key_data, tmp)
-        tmp.flush()
-        tmp.close()
-
-        # Point ADC at it
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
-
-        # Authenticate with service account credentials directly
-        credentials = ee.ServiceAccountCredentials(
-            email=key_data["client_email"],
-            key_file=tmp.name,
-        )
-        ee.Initialize(credentials=credentials, project=project)
-        print(f"[GEE] Authenticated via service account: {key_data['client_email']}")
-
-    else:
-        # --- Local path ---
-        # Try existing credentials first, fall back to browser auth
-        try:
-            ee.Initialize(project=project)
-            print("[GEE] Authenticated via existing local credentials.")
-        except Exception:
-            print("[GEE] No local credentials found. Opening browser for authentication...")
+        if service_account_json:
+            # --- Cloud / Railway path ---
+            # Full JSON content is in the env var.
+            # Write to a temp file so ADC and ee.ServiceAccountCredentials both work.
             try:
-                ee.Authenticate()
-                ee.Initialize(project=project)
-                print("[GEE] Authenticated via browser.")
-            except Exception as e:
+                key_data = json.loads(service_account_json)
+            except json.JSONDecodeError as e:
                 raise RuntimeError(
-                    f"GEE authentication failed: {e}\n"
-                    "On Railway: set GEE_SERVICE_ACCOUNT_JSON env var.\n"
-                    "Locally: run ee.Authenticate() once in a Python shell."
+                    f"GEE_SERVICE_ACCOUNT_JSON is set but is not valid JSON: {e}\n"
+                    "Make sure you pasted the entire JSON file contents, not just the path."
                 )
 
-    _initialized = True
+            # Write temp credentials file
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="gee_sa_"
+            )
+            json.dump(key_data, tmp)
+            tmp.flush()
+            tmp.close()
+
+            # Point ADC at it
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+
+            # Authenticate with service account credentials directly
+            credentials = ee.ServiceAccountCredentials(
+                email=key_data["client_email"],
+                key_file=tmp.name,
+            )
+            ee.Initialize(credentials=credentials, project=project)
+            print(f"[GEE] Authenticated via service account: {key_data['client_email']}")
+
+        else:
+            # --- Local path ---
+            # Try existing credentials first, fall back to browser auth
+            try:
+                ee.Initialize(project=project)
+                print("[GEE] Authenticated via existing local credentials.")
+            except Exception:
+                print("[GEE] No local credentials found. Opening browser for authentication...")
+                try:
+                    ee.Authenticate()
+                    ee.Initialize(project=project)
+                    print("[GEE] Authenticated via browser.")
+                except Exception as e:
+                    raise RuntimeError(
+                        f"GEE authentication failed: {e}\n"
+                        "On Railway: set GEE_SERVICE_ACCOUNT_JSON env var.\n"
+                        "Locally: run ee.Authenticate() once in a Python shell."
+                    )
+
+        _initialized = True
