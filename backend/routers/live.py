@@ -61,6 +61,13 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
         .first()
     )
 
+    import time
+    t0 = time.time()
+    t1 = t0
+    t2 = t0
+    t3 = t0
+    t4 = t0
+
     mask_png_base64 = None
     # Seeded zones exist before their first UNet run.  Presence in SQLite is
     # not a valid cache hit; only a completed structural timestamp is.
@@ -75,20 +82,30 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
             )
         # GEE downloads and ONNX inference are memory-heavy.  Render's
         # starter instance cannot safely run two of them at once.
+        print(f"[LIVE] Starting GEE fetch for ({lat}, {lon})")
         try:
             patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
         except RuntimeError as e:
             raise HTTPException(status_code=502, detail=f"Satellite fetch failed: {e}")
+        t1 = time.time()
+        print(f"[LIVE] GEE fetch took {t1 - t0:.2f}s")
 
+        print(f"[LIVE] Waiting for lock...")
         with prediction_lock:
+            t2 = time.time()
+            print(f"[LIVE] Acquired lock after {t2 - t1:.2f}s, starting ONNX...")
             prediction      = model.predict(patch)
             mask_png_base64 = prediction["mask_png_base64"]
+            t3 = time.time()
+            print(f"[LIVE] ONNX inference took {t3 - t2:.2f}s")
 
         try:
             rainfall = fetch_rainfall_openmeteo.fetch_rainfall(lat, lon)
         except Exception as e:
             print(f"[LIVE] Rainfall fetch failed ({lat},{lon}): {e}")
             rainfall = {"rainfall_mm_24h": 0.0, "rainfall_mm_48h": 0.0, "rainfall_mm_72h": 0.0}
+        t4 = time.time()
+        print(f"[LIVE] Rainfall fetch took {t4 - t3:.2f}s")
 
         if zone is None:
             zone = models.Zone(
@@ -144,6 +161,12 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
         "critical_infra":     impact["critical_infra"],
         "recovery_note":      impact["recovery_note"],
         "impact_score":       impact["impact_score"],
+        "timings":            {
+            "gee_fetch": round(t1 - t0, 2) if needs_inference else 0.0,
+            "lock_wait": round(t2 - t1, 2) if needs_inference else 0.0,
+            "onnx_inference": round(t3 - t2, 2) if needs_inference else 0.0,
+            "rainfall_fetch": round(t4 - (t3 if needs_inference else t0), 2)
+        }
     }
 
 
