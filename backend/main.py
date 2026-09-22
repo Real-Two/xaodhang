@@ -82,13 +82,13 @@ def _startup_pipeline():
             needs_rainfall = [z for z in all_zones
                               if z.rainfall_updated_at is None]
             if not needs_rainfall:
-                print("[STARTUP] All zones have rainfall — skipping refresh.")
+                print("[STARTUP] All zones have rainfall - skipping refresh.")
             else:
-                print(f"[STARTUP] {len(needs_rainfall)} zones need rainfall — refreshing...")
+                print(f"[STARTUP] {len(needs_rainfall)} zones need rainfall - refreshing...")
                 try:
                     refresh_rainfall_batch(needs_rainfall, db)
                     for z in needs_rainfall:
-                        print(f"[STARTUP] Rainfall OK: {z.name} → 72h={z.rainfall_mm_72h:.1f}mm")
+                        print(f"[STARTUP] Rainfall OK: {z.name} -> 72h={z.rainfall_mm_72h:.1f}mm")
                 except Exception as e:
                     print(f"[STARTUP] Rainfall refresh failed: {e}")
 
@@ -98,7 +98,7 @@ def _startup_pipeline():
             for zone in unscored:
                 try:
                     _run_model_for_zone(zone, db)
-                    print(f"[STARTUP] Terrain scored: {zone.name} → {zone.structural_risk:.6f}")
+                    print(f"[STARTUP] Terrain scored: {zone.name} -> {zone.structural_risk:.6f}")
                 except Exception as e:
                     print(f"[STARTUP] Terrain error {zone.name}: {e}")
 
