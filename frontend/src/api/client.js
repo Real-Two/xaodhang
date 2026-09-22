@@ -1,14 +1,11 @@
 /**
- * RedBeryl API Client — Railway Production
- * Backend: https://xaodhang-production12.up.railway.app
- * Docs:    https://xaodhang-production12.up.railway.app/docs
- *
- * CORS is fully open (*) on the backend — no preflight issues.
+ * RedBeryl API Client — Render
+ * Backend: https://xaodhang.onrender.com
  */
 
 export const BASE_URL =
   import.meta.env.VITE_API_URL ||
-  'https://xaodhang-production12.up.railway.app';
+  'https://xaodhang.onrender.com';
 
 class ApiError extends Error {
   constructor(status, message) {
