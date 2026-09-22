@@ -65,13 +65,12 @@ def _startup_pipeline():
         time.sleep(5)
 
         from database import SessionLocal
-        from routers.predict import _run_model_for_zone
-        from routers.rainfall import _do_gee_fetch
+        from routers.rainfall import _do_rainfall_fetch
 
         db = SessionLocal()
         try:
             blank = [z for z in db.query(models.Zone).all()
-                     if z.structural_risk == 0.0]
+                     if z.rainfall_updated_at is None]
             if not blank:
                 print("[STARTUP] All zones populated — skipping auto-pipeline.")
                 return
@@ -79,30 +78,10 @@ def _startup_pipeline():
             print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
             for zone in blank:
                 try:
-                    _do_gee_fetch(zone, db)
+                    _do_rainfall_fetch(zone, db)
                 except Exception as e:
                     print(f"[STARTUP] Rainfall error {zone.name}: {e}")
-                try:
-                    _run_model_for_zone(zone, db)
-                except Exception as e:
-                    print(f"[STARTUP] Model error {zone.name}: {e}")
-
-                rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-                combined_score, risk_level = compute_combined_risk(
-                    zone.structural_risk, rainfall_risk)
-
-                db.add(models.RiskHistory(
-                    zone_id=zone.id,
-                    structural_risk=zone.structural_risk,
-                    rainfall_risk=rainfall_risk,
-                    combined_score=combined_score,
-                    risk_level=risk_level,
-                    recorded_at=datetime.datetime.utcnow(),
-                ))
-                db.commit()
-                print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
-
-            print("[STARTUP] Auto-pipeline complete.")
+            print("[STARTUP] Rainfall refresh complete.")
         finally:
             db.close()
 
@@ -175,7 +154,7 @@ def run_pipeline(db=Depends(get_db)):
                                 _build_message, _get_last_alert_level,
                                 _send_fast2sms)
     from routers.predict import _run_model_for_zone
-    from routers.rainfall import _do_gee_fetch
+    from routers.rainfall import _do_rainfall_fetch
 
     all_zones = db.query(models.Zone).all()
     summary = []
@@ -190,7 +169,7 @@ def run_pipeline(db=Depends(get_db)):
         }
 
         try:
-            _do_gee_fetch(zone, db)
+            _do_rainfall_fetch(zone, db)
             entry["rainfall"] = "ok"
         except Exception as e:
             entry["rainfall"] = f"error: {e}"

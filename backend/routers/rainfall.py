@@ -1,5 +1,5 @@
 """
-Rainfall data — CHIRPS via Google Earth Engine.
+Rainfall data — Open-Meteo precipitation data.
 
 POST /rainfall/{zone_id}        — manual override (testing)
 POST /rainfall/fetch/{zone_id}  — auto-fetch from CHIRPS via GEE
@@ -8,8 +8,6 @@ GET  /rainfall/{zone_id}/risk   — rainfall risk score for a zone
 """
 
 import datetime
-import os
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -18,27 +16,17 @@ import schemas
 from database import get_db
 from risk_engine import compute_rainfall_risk
 
-GEE_PROJECT = os.environ.get("GEE_PROJECT", "xhaodong-506519")
-
-try:
-    import fetch_rainfall_chirps
-    _GEE_AVAILABLE = True
-except ImportError:
-    _GEE_AVAILABLE = False
+import fetch_rainfall_openmeteo
 
 router = APIRouter(prefix="/rainfall", tags=["rainfall"])
 
 
-def _do_gee_fetch(zone: models.Zone, db: Session) -> dict:
-    """Fetches CHIRPS rainfall for a zone and saves to DB. Returns the values."""
-    if not _GEE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="earthengine-api not installed.")
+def _do_rainfall_fetch(zone: models.Zone, db: Session) -> dict:
+    """Fetches current rainfall without GEE and saves it to the zone."""
     try:
-        from gee_auth import initialize_gee
-        initialize_gee(GEE_PROJECT)
-        result = fetch_rainfall_chirps.fetch_rainfall(zone.lat, zone.lon, GEE_PROJECT)
+        result = fetch_rainfall_openmeteo.fetch_rainfall(zone.lat, zone.lon)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"GEE/CHIRPS fetch failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Rainfall fetch failed: {e}")
 
     zone.rainfall_mm_24h = result.get("rainfall_mm_24h", 0.0)
     zone.rainfall_mm_48h = result.get("rainfall_mm_48h", 0.0)
@@ -52,15 +40,13 @@ def _do_gee_fetch(zone: models.Zone, db: Session) -> dict:
 @router.post("/fetch-all")
 def fetch_all_rainfall(db: Session = Depends(get_db)):
     """
-    Auto-fetches CHIRPS rainfall from GEE for every zone.
-    Call this once to populate all zones, then run update_all_zones.py
-    on a schedule to keep it fresh.
+    Refreshes rainfall for every zone from Open-Meteo.
     """
     zones = db.query(models.Zone).all()
     results = []
     for zone in zones:
         try:
-            data = _do_gee_fetch(zone, db)
+            data = _do_rainfall_fetch(zone, db)
             results.append({
                 "zone_id": zone.id,
                 "zone_name": zone.name,
@@ -77,11 +63,11 @@ def fetch_all_rainfall(db: Session = Depends(get_db)):
 
 @router.post("/fetch/{zone_id}")
 def fetch_zone_rainfall(zone_id: int, db: Session = Depends(get_db)):
-    """Auto-fetch CHIRPS rainfall for one zone from GEE."""
+    """Refresh rainfall for one zone from Open-Meteo."""
     zone = db.query(models.Zone).filter(models.Zone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
-    data = _do_gee_fetch(zone, db)
+    data = _do_rainfall_fetch(zone, db)
     return {"zone_id": zone_id, "zone_name": zone.name, "status": "ok", **data}
 
 

@@ -3,14 +3,19 @@ live.py — on-demand risk prediction for ANY lat/lon in the Northeast region.
 """
 
 import datetime
+import asyncio
+import json
 import os
+from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import models
-from database import get_db
+from database import SessionLocal, get_db
+from inference_guard import prediction_lock
 from ml_service import StructuralRiskModel
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from seismic import get_seismic_context
@@ -18,7 +23,7 @@ from zone_impact import get_zone_impact
 
 try:
     import fetch_real_patch
-    import fetch_rainfall_chirps
+    import fetch_rainfall_openmeteo
     _GEE_ROUTERS_AVAILABLE = True
 except Exception as _e:
     _GEE_ROUTERS_AVAILABLE = False
@@ -68,16 +73,19 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
                 status_code=503,
                 detail="Live prediction unavailable: GEE not configured on this server.",
             )
-        try:
-            patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
-        except RuntimeError as e:
-            raise HTTPException(status_code=502, detail=f"Satellite fetch failed: {e}")
+        # GEE downloads and ONNX inference are memory-heavy.  Render's
+        # starter instance cannot safely run two of them at once.
+        with prediction_lock:
+            try:
+                patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
+            except RuntimeError as e:
+                raise HTTPException(status_code=502, detail=f"Satellite fetch failed: {e}")
 
-        prediction      = model.predict(patch)
-        mask_png_base64 = prediction["mask_png_base64"]
+            prediction      = model.predict(patch)
+            mask_png_base64 = prediction["mask_png_base64"]
 
         try:
-            rainfall = fetch_rainfall_chirps.fetch_rainfall(lat, lon, GEE_PROJECT)
+            rainfall = fetch_rainfall_openmeteo.fetch_rainfall(lat, lon)
         except Exception as e:
             print(f"[LIVE] Rainfall fetch failed ({lat},{lon}): {e}")
             rainfall = {"rainfall_mm_24h": 0.0, "rainfall_mm_48h": 0.0, "rainfall_mm_72h": 0.0}
@@ -155,3 +163,43 @@ def predict_live_get(
     model: StructuralRiskModel  = Depends(get_model),
 ):
     return _do_predict(LiveQuery(lat=lat, lon=lon, name=name), db, model)
+
+
+def _stream_prediction(query: LiveQuery) -> dict:
+    """Runs a streamed request in its own SQLAlchemy session/thread."""
+    db = SessionLocal()
+    try:
+        return _do_predict(query, db, get_model())
+    finally:
+        db.close()
+
+
+async def _live_stream(query: LiveQuery) -> AsyncGenerator[str, None]:
+    """Keep the HTTP response active while the satellite request is running."""
+    yield f"data: {json.dumps({'type': 'start', 'stage': 'satellite'})}\n\n"
+    await asyncio.sleep(0)
+    try:
+        task = asyncio.create_task(asyncio.to_thread(_stream_prediction, query))
+        # Render/proxies can close an otherwise idle long-running response.
+        # SSE comment frames keep the connection alive without changing UI state.
+        while not task.done():
+            done, _ = await asyncio.wait({task}, timeout=10)
+            if not done:
+                yield ": keep-alive\n\n"
+        result = await task
+        yield f"data: {json.dumps({'type': 'result', 'result': result})}\n\n"
+    except HTTPException as exc:
+        yield f"data: {json.dumps({'type': 'error', 'detail': exc.detail})}\n\n"
+    except Exception as exc:
+        print(f"[LIVE] Stream failed: {exc}")
+        yield f"data: {json.dumps({'type': 'error', 'detail': 'Live prediction failed.'})}\n\n"
+
+
+@router.get("/live/stream")
+async def predict_live_stream(lat: float, lon: float, name: str | None = None):
+    """SSE live inference endpoint for long-running GEE/ONNX predictions."""
+    return StreamingResponse(
+        _live_stream(LiveQuery(lat=lat, lon=lon, name=name)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

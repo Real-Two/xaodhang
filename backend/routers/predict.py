@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from database import get_db
+from inference_guard import prediction_lock
 from ml_service import StructuralRiskModel
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from seismic import get_seismic_context
@@ -51,14 +52,14 @@ def _run_model_for_zone(zone: models.Zone, db: Session) -> schemas.PredictOut:
             detail="earthengine-api not installed — cannot auto-fetch patches."
         )
     try:
-        from gee_auth import initialize_gee
-        initialize_gee(GEE_PROJECT)
-        patch = fetch_real_patch.fetch_patch(zone.lat, zone.lon, GEE_PROJECT)
+        with prediction_lock:
+            from gee_auth import initialize_gee
+            initialize_gee(GEE_PROJECT)
+            patch = fetch_real_patch.fetch_patch(zone.lat, zone.lon, GEE_PROJECT)
+            model = get_model()
+            result = model.predict(patch)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=f"GEE patch fetch failed: {e}")
-
-    model = get_model()
-    result = model.predict(patch)
 
     zone.structural_risk = result["risk_score"]
     zone.structural_updated_at = datetime.datetime.utcnow()

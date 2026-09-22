@@ -114,6 +114,53 @@ export async function predictLive(lat, lon, signal) {
   return request('GET', `/predict/live?lat=${lat}&lon=${lon}`, { signal });
 }
 
+/**
+ * Stream a live prediction so Render sees activity while GEE is fetching the
+ * satellite patch. Resolves with the same object as predictLive.
+ */
+export async function predictLiveStream(lat, lon, signal, onEvent = () => {}) {
+  const res = await fetch(`${BASE_URL}/predict/live/stream?lat=${lat}&lon=${lon}`, {
+    method: 'GET',
+    signal,
+    cache: 'no-store',
+    headers: { Accept: 'text/event-stream' },
+  });
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status, `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    let boundary;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const payload = frame
+        .split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('');
+      if (!payload) continue;
+
+      const event = JSON.parse(payload);
+      onEvent(event);
+      if (event.type === 'result') return event.result;
+      if (event.type === 'error') throw new ApiError(502, event.detail || 'Live prediction failed.');
+    }
+
+    if (done) break;
+  }
+
+  throw new Error('Prediction stream ended before a result was returned.');
+}
+
 // ── Structural Prediction ─────────────────────────────────────────────────────
 
 /**

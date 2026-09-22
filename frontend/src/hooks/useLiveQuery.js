@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { predictLive } from '../api/client';
+import { predictLiveStream } from '../api/client';
 import { useApp } from '../context/AppContext';
 
 // Railway GEE pipeline: typically 5–10s, 30s hard cap
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 180_000;
 
 /**
  * useLiveQuery — map click → GET /predict/live?lat=X&lon=Y → ZoneDrawer panel.
@@ -88,12 +88,16 @@ export function useLiveQuery() {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-      console.log(`[RedBeryl] GET /predict/live?lat=${lat}&lon=${lon}`);
-      const result = await predictLive(lat, lon, controller.signal);
+      console.log(`[RedBeryl] GET /predict/live/stream?lat=${lat}&lon=${lon}`);
+      const result = await predictLiveStream(lat, lon, controller.signal, event => {
+        if (event.stage) {
+          actions.setLiveQuery({ stage: event.stage });
+        }
+      });
       clearTimeout(timeoutId);
       clearInterval(timerRef.current);
 
-      console.log('[RedBeryl] /predict/live response:', result);
+      console.log('[RedBeryl] /predict/live/stream response:', result);
 
       if (!result || typeof result !== 'object') {
         throw new Error('Invalid response from prediction pipeline.');

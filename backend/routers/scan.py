@@ -157,21 +157,23 @@ def _run_scan_point(lat: float, lon: float, name: str) -> dict:
     """
     try:
         import fetch_real_patch
-        import fetch_rainfall_chirps
-        from ml_service import StructuralRiskModel
-
-        model = StructuralRiskModel()
+        import fetch_rainfall_openmeteo
+        from inference_guard import prediction_lock
+        from routers.live import get_model
 
         try:
-            patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
-            prediction = model.predict(patch)
+            # A regional scan must not create concurrent GEE/ONNX workloads
+            # on the small Render worker.
+            with prediction_lock:
+                patch = fetch_real_patch.fetch_patch(lat, lon, GEE_PROJECT)
+                prediction = get_model().predict(patch)
             structural = prediction["risk_score"]
         except Exception as e:
             print(f"[SCAN] GEE/model failed ({lat},{lon}): {e}")
             structural = 0.0
 
         try:
-            rainfall_data = fetch_rainfall_chirps.fetch_rainfall(lat, lon, GEE_PROJECT)
+            rainfall_data = fetch_rainfall_openmeteo.fetch_rainfall(lat, lon)
             rain72 = rainfall_data.get("rainfall_mm_72h", 0.0)
         except Exception:
             rain72 = 0.0
