@@ -1,14 +1,14 @@
 /**
- * RedBeryl API Client — Railway Production
- * Backend: https://xaodhang-production12.up.railway.app
- * Docs:    https://xaodhang-production12.up.railway.app/docs
+ * RedBeryl API Client — Render Production
+ * Backend: https://xaodhang.onrender.com
+ * Docs:    https://xaodhang.onrender.com/docs
  *
  * CORS is fully open (*) on the backend — no preflight issues.
  */
 
 export const BASE_URL =
   import.meta.env.VITE_API_URL ||
-  'https://xaodhang-production12.up.railway.app';
+  'https://xaodhang.onrender.com';
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -226,13 +226,16 @@ export async function geocodeSearch(query, signal) {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
-/** Ping the Railway backend root — resolves true if alive. */
+/** Ping the Render backend root — resolves true if alive. */
 export async function pingBackend() {
   try {
     const res = await fetch(`${BASE_URL}/`, {
       method: 'GET',
       cache: 'no-store',
-      signal: AbortSignal.timeout(6000),
+      // Render free-tier cold starts can take 30-50s on first request;
+      // 15s is generous enough for warm instances, short enough to detect
+      // genuine outages without blocking the UI too long.
+      signal: AbortSignal.timeout(15_000),
     });
     return res.status < 500;
   } catch (_) {

@@ -23,7 +23,7 @@ def get_zone(zone_id: int, db: Session = Depends(get_db)):
 
 from fastapi import Response
 
-@router.head("/zones")
+@router.head("")
 def head_zones():
     return Response(status_code=200)
 

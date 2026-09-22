@@ -57,8 +57,14 @@ def _startup_pipeline():
     """
     Runs in a background thread 5s after startup.
     Fetches rainfall + structural risk for any zones with blank data.
-    This means every Railway redeploy self-heals automatically —
+    This means every Render redeploy self-heals automatically —
     no manual /pipeline/run needed.
+
+    Two independent checks:
+      1. Zones with structural_risk == 0.0 → run model inference
+      2. Zones with no rainfall data → fetch CHIRPS from GEE
+    This ensures rainfall is ALWAYS populated, even for zones where
+    the model already ran (and set a tiny non-zero structural_risk).
     """
     def _run():
         import time
@@ -70,37 +76,56 @@ def _startup_pipeline():
 
         db = SessionLocal()
         try:
-            blank = [z for z in db.query(models.Zone).all()
-                     if z.structural_risk == 0.0]
-            if not blank:
+            all_zones = db.query(models.Zone).all()
+
+            # Zones needing structural risk (model never ran)
+            needs_model = [z for z in all_zones if z.structural_risk == 0.0]
+            # Zones needing rainfall (GEE fetch never ran)
+            needs_rainfall = [z for z in all_zones
+                              if z.rainfall_updated_at is None]
+
+            if not needs_model and not needs_rainfall:
                 print("[STARTUP] All zones populated — skipping auto-pipeline.")
                 return
 
-            print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
-            for zone in blank:
-                try:
-                    _do_gee_fetch(zone, db)
-                except Exception as e:
-                    print(f"[STARTUP] Rainfall error {zone.name}: {e}")
+            print(f"[STARTUP] {len(needs_model)} zones need model, "
+                  f"{len(needs_rainfall)} zones need rainfall — running pipeline...")
+
+            # Run model for zones that need it
+            for zone in needs_model:
                 try:
                     _run_model_for_zone(zone, db)
+                    print(f"[STARTUP] Model OK: {zone.name} → {zone.structural_risk:.6f}")
                 except Exception as e:
                     print(f"[STARTUP] Model error {zone.name}: {e}")
 
-                rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
-                combined_score, risk_level = compute_combined_risk(
-                    zone.structural_risk, rainfall_risk)
+            # Fetch rainfall for zones that need it
+            for zone in needs_rainfall:
+                try:
+                    _do_gee_fetch(zone, db)
+                    print(f"[STARTUP] Rainfall OK: {zone.name} → "
+                          f"72h={zone.rainfall_mm_72h:.1f}mm")
+                except Exception as e:
+                    print(f"[STARTUP] Rainfall error {zone.name}: {e}")
 
-                db.add(models.RiskHistory(
-                    zone_id=zone.id,
-                    structural_risk=zone.structural_risk,
-                    rainfall_risk=rainfall_risk,
-                    combined_score=combined_score,
-                    risk_level=risk_level,
-                    recorded_at=datetime.datetime.utcnow(),
-                ))
-                db.commit()
-                print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
+            # Log combined risk for ALL zones that were updated
+            updated_zones = set(z.id for z in needs_model) | set(z.id for z in needs_rainfall)
+            for zone in all_zones:
+                if zone.id in updated_zones:
+                    rainfall_risk = compute_rainfall_risk(zone.rainfall_mm_72h)
+                    combined_score, risk_level = compute_combined_risk(
+                        zone.structural_risk, rainfall_risk)
+
+                    db.add(models.RiskHistory(
+                        zone_id=zone.id,
+                        structural_risk=zone.structural_risk,
+                        rainfall_risk=rainfall_risk,
+                        combined_score=combined_score,
+                        risk_level=risk_level,
+                        recorded_at=datetime.datetime.utcnow(),
+                    ))
+                    db.commit()
+                    print(f"[STARTUP] {zone.name}: {risk_level} ({combined_score:.2f})")
 
             print("[STARTUP] Auto-pipeline complete.")
         finally:
