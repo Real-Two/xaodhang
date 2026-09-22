@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 import models
 from database import SessionLocal, get_db
 from inference_guard import prediction_lock
-from ml_service import StructuralRiskModel
+from ml_service import StructuralRiskModel, get_shared_model
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from seismic import get_seismic_context
 from zone_impact import get_zone_impact
@@ -38,10 +38,7 @@ _model: StructuralRiskModel | None = None
 
 
 def get_model() -> StructuralRiskModel:
-    global _model
-    if _model is None:
-        _model = StructuralRiskModel()
-    return _model
+    return get_shared_model()
 
 
 class LiveQuery(BaseModel):
@@ -65,9 +62,12 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
     )
 
     mask_png_base64 = None
-    cached = zone is not None
+    # Seeded zones exist before their first UNet run.  Presence in SQLite is
+    # not a valid cache hit; only a completed structural timestamp is.
+    needs_inference = zone is None or zone.structural_updated_at is None
+    cached = not needs_inference
 
-    if zone is None:
+    if needs_inference:
         if not _GEE_ROUTERS_AVAILABLE:
             raise HTTPException(
                 status_code=503,
@@ -90,18 +90,20 @@ def _do_predict(query: LiveQuery, db: Session, model: StructuralRiskModel) -> di
             print(f"[LIVE] Rainfall fetch failed ({lat},{lon}): {e}")
             rainfall = {"rainfall_mm_24h": 0.0, "rainfall_mm_48h": 0.0, "rainfall_mm_72h": 0.0}
 
-        zone = models.Zone(
-            name=query.name or f"Live query {lat:.3f},{lon:.3f}",
-            lat=lat,
-            lon=lon,
-            structural_risk=prediction["risk_score"],
-            structural_updated_at=datetime.datetime.utcnow(),
-            rainfall_mm_24h=rainfall["rainfall_mm_24h"],
-            rainfall_mm_48h=rainfall["rainfall_mm_48h"],
-            rainfall_mm_72h=rainfall["rainfall_mm_72h"],
-            rainfall_updated_at=datetime.datetime.utcnow(),
-        )
-        db.add(zone)
+        if zone is None:
+            zone = models.Zone(
+                name=query.name or f"Live query {lat:.3f},{lon:.3f}",
+                lat=lat,
+                lon=lon,
+            )
+            db.add(zone)
+
+        zone.structural_risk = prediction["risk_score"]
+        zone.structural_updated_at = datetime.datetime.utcnow()
+        zone.rainfall_mm_24h = rainfall["rainfall_mm_24h"]
+        zone.rainfall_mm_48h = rainfall["rainfall_mm_48h"]
+        zone.rainfall_mm_72h = rainfall["rainfall_mm_72h"]
+        zone.rainfall_updated_at = datetime.datetime.utcnow()
         db.commit()
         db.refresh(zone)
 

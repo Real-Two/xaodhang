@@ -33,6 +33,12 @@ def _get_with_retry(url: str) -> dict:
                 time.sleep(wait)
                 continue
             raise
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            if attempt == MAX_RETRIES - 1:
+                raise RuntimeError(f"Open-Meteo request failed after {MAX_RETRIES} attempts: {e}") from e
+            wait = 2 * (attempt + 1)
+            print(f"[RAINFALL] transient request failure — retrying in {wait}s: {e}")
+            time.sleep(wait)
     raise RuntimeError(f"Open-Meteo 429 after {MAX_RETRIES} retries")
 
 
@@ -90,3 +96,36 @@ def fetch_rainfall(lat: float, lon: float, gee_project: str = None) -> dict:
         "rainfall_mm_72h": round(mm_72h, 2),
         "source": source,
     }
+
+
+def fetch_rainfall_many(coordinates: list[tuple[float, float]]) -> list[dict]:
+    """Fetch rainfall for many locations in one Open-Meteo request."""
+    if not coordinates:
+        return []
+
+    lats = ",".join(str(lat) for lat, _ in coordinates)
+    lons = ",".join(str(lon) for _, lon in coordinates)
+    url = (
+        f"{FORECAST_URL}?latitude={lats}&longitude={lons}"
+        f"&daily=precipitation_sum&past_days=10&forecast_days=0&timezone=UTC"
+    )
+    data = _get_with_retry(url)
+    records = data if isinstance(data, list) else [data]
+    if len(records) != len(coordinates):
+        raise RuntimeError(
+            f"Open-Meteo returned {len(records)} locations for {len(coordinates)} requests"
+        )
+
+    results = []
+    for (lat, lon), record in zip(coordinates, records):
+        daily = record.get("daily", {}).get("precipitation_sum") or []
+        daily_mm = [value or 0.0 for value in daily]
+        if not daily_mm:
+            raise RuntimeError(f"Open-Meteo returned no daily rainfall for ({lat}, {lon})")
+        results.append({
+            "rainfall_mm_24h": round(sum(daily_mm[-1:]), 2),
+            "rainfall_mm_48h": round(sum(daily_mm[-2:]), 2),
+            "rainfall_mm_72h": round(sum(daily_mm[-3:]), 2),
+            "source": "open-meteo-forecast",
+        })
+    return results

@@ -65,7 +65,8 @@ def _startup_pipeline():
         time.sleep(5)
 
         from database import SessionLocal
-        from routers.rainfall import _do_rainfall_fetch
+        from routers.predict import _run_model_for_zone
+        from routers.rainfall import refresh_rainfall_batch
 
         db = SessionLocal()
         try:
@@ -73,14 +74,24 @@ def _startup_pipeline():
                      if z.rainfall_updated_at is None]
             if not blank:
                 print("[STARTUP] All zones populated — skipping auto-pipeline.")
-                return
-
-            print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
-            for zone in blank:
+            else:
+                print(f"[STARTUP] {len(blank)} blank zones — running pipeline...")
                 try:
-                    _do_rainfall_fetch(zone, db)
+                    refresh_rainfall_batch(blank, db)
                 except Exception as e:
-                    print(f"[STARTUP] Rainfall error {zone.name}: {e}")
+                    print(f"[STARTUP] Rainfall refresh failed: {e}")
+
+            # Populate only missing structural records, sequentially.  The
+            # process-wide prediction lock prevents this worker from sharing
+            # GEE/ONNX memory with a live map request.
+            unscored = [z for z in db.query(models.Zone).all()
+                        if z.structural_updated_at is None]
+            for zone in unscored:
+                try:
+                    _run_model_for_zone(zone, db)
+                    print(f"[STARTUP] Terrain scored: {zone.name}")
+                except Exception as e:
+                    print(f"[STARTUP] Terrain error {zone.name}: {e}")
             print("[STARTUP] Rainfall refresh complete.")
         finally:
             db.close()

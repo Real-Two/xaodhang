@@ -37,6 +37,22 @@ def _do_rainfall_fetch(zone: models.Zone, db: Session) -> dict:
     return result
 
 
+def refresh_rainfall_batch(zones: list[models.Zone], db: Session) -> None:
+    """Atomically refresh a group of zones with one Open-Meteo request."""
+    if not zones:
+        return
+    results = fetch_rainfall_openmeteo.fetch_rainfall_many(
+        [(zone.lat, zone.lon) for zone in zones]
+    )
+    now = datetime.datetime.utcnow()
+    for zone, result in zip(zones, results):
+        zone.rainfall_mm_24h = result["rainfall_mm_24h"]
+        zone.rainfall_mm_48h = result["rainfall_mm_48h"]
+        zone.rainfall_mm_72h = result["rainfall_mm_72h"]
+        zone.rainfall_updated_at = now
+    db.commit()
+
+
 @router.post("/fetch-all")
 def fetch_all_rainfall(db: Session = Depends(get_db)):
     """

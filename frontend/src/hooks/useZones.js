@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { getRiskAll, pingBackend } from '../api/client';
+import { getRiskAll } from '../api/client';
 import { useApp } from '../context/AppContext';
 
 const POLL_INTERVAL_MS = 60_000; // refresh risk data every 60s
@@ -21,11 +21,8 @@ export function useZones() {
 
   async function fetchZones() {
     try {
-      const alive = await pingBackend();
-      actions.setBackendStatus(alive);
-      if (!alive) return;
-
       const raw = await getRiskAll();
+      actions.setBackendStatus(true);
       const rawArr = Array.isArray(raw) ? raw : [];
 
       // Normalize: /risk/all uses zone_id; the rest of the app uses id

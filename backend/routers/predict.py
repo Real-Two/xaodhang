@@ -20,7 +20,7 @@ import models
 import schemas
 from database import get_db
 from inference_guard import prediction_lock
-from ml_service import StructuralRiskModel
+from ml_service import StructuralRiskModel, get_shared_model
 from risk_engine import compute_combined_risk, compute_rainfall_risk
 from seismic import get_seismic_context
 from zone_impact import get_zone_impact
@@ -39,10 +39,7 @@ _model: StructuralRiskModel | None = None
 
 
 def get_model() -> StructuralRiskModel:
-    global _model
-    if _model is None:
-        _model = StructuralRiskModel()
-    return _model
+    return get_shared_model()
 
 
 def _run_model_for_zone(zone: models.Zone, db: Session) -> schemas.PredictOut:
@@ -129,8 +126,8 @@ async def predict_structural(zone_id: int, file: UploadFile = File(...),
         raise HTTPException(status_code=400,
                             detail=f"Expected 14 bands, got shape {patch.shape}.")
 
-    model = get_model()
-    result = model.predict(patch)
+    with prediction_lock:
+        result = get_model().predict(patch)
 
     zone.structural_risk = result["risk_score"]
     zone.structural_updated_at = datetime.datetime.utcnow()

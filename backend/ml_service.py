@@ -125,6 +125,17 @@ class StructuralRiskModel:
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+_shared_model: StructuralRiskModel | None = None
+
+
+def get_shared_model() -> StructuralRiskModel:
+    """Return one ONNX Runtime session for the whole API process."""
+    global _shared_model
+    if _shared_model is None:
+        _shared_model = StructuralRiskModel()
+    return _shared_model
+
+
 if __name__ == "__main__":
     dummy = np.random.rand(128, 128, NUM_BANDS).astype(np.float32)
 
