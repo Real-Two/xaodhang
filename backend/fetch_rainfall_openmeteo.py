@@ -37,7 +37,7 @@ def _get_with_retry(url: str) -> dict:
             if attempt == MAX_RETRIES - 1:
                 raise RuntimeError(f"Open-Meteo request failed after {MAX_RETRIES} attempts: {e}") from e
             wait = 2 * (attempt + 1)
-            print(f"[RAINFALL] transient request failure — retrying in {wait}s: {e}")
+            print(f"[RAINFALL] transient request failure - retrying in {wait}s: {e}")
             time.sleep(wait)
     raise RuntimeError(f"Open-Meteo 429 after {MAX_RETRIES} retries")
 
@@ -62,7 +62,7 @@ def fetch_rainfall(lat: float, lon: float, gee_project: str = None) -> dict:
         daily_mm = [v or 0.0 for v in data["daily"]["precipitation_sum"]]
         source   = "open-meteo-forecast"
     except Exception as e:
-        print(f"[RAINFALL] Forecast failed ({lat},{lon}): {e} — trying archive")
+        print(f"[RAINFALL] Forecast failed ({lat},{lon}): {e} - trying archive")
 
     # Fallback: archive (stop at today-4 to avoid lag-induced zeros)
     if daily_mm is None:
@@ -105,11 +105,40 @@ def fetch_rainfall_many(coordinates: list[tuple[float, float]]) -> list[dict]:
 
     lats = ",".join(str(lat) for lat, _ in coordinates)
     lons = ",".join(str(lon) for _, lon in coordinates)
-    url = (
-        f"{FORECAST_URL}?latitude={lats}&longitude={lons}"
-        f"&daily=precipitation_sum&past_days=10&forecast_days=0&timezone=UTC"
-    )
-    data = _get_with_retry(url)
+    
+    data = None
+    source = "fallback"
+    
+    # Try Forecast API
+    try:
+        url = (
+            f"{FORECAST_URL}?latitude={lats}&longitude={lons}"
+            f"&daily=precipitation_sum&past_days=10&forecast_days=0&timezone=UTC"
+        )
+        data = _get_with_retry(url)
+        source = "open-meteo-forecast"
+    except Exception as e:
+        print(f"[RAINFALL] Batch forecast failed: {e} - trying archive")
+
+    # Try Archive API
+    if data is None:
+        try:
+            now   = datetime.date.today()
+            end   = (now - datetime.timedelta(days=4)).isoformat()
+            start = (now - datetime.timedelta(days=12)).isoformat()
+            url = (
+                f"{ARCHIVE_URL}?latitude={lats}&longitude={lons}"
+                f"&start_date={start}&end_date={end}"
+                f"&daily=precipitation_sum&timezone=UTC"
+            )
+            data = _get_with_retry(url)
+            source = "open-meteo-archive"
+        except Exception as e:
+            print(f"[RAINFALL] Batch archive also failed: {e}")
+            
+    if data is None:
+        raise RuntimeError("Both Open-Meteo forecast and archive failed for batch.")
+
     records = data if isinstance(data, list) else [data]
     if len(records) != len(coordinates):
         raise RuntimeError(
@@ -121,11 +150,17 @@ def fetch_rainfall_many(coordinates: list[tuple[float, float]]) -> list[dict]:
         daily = record.get("daily", {}).get("precipitation_sum") or []
         daily_mm = [value or 0.0 for value in daily]
         if not daily_mm:
-            raise RuntimeError(f"Open-Meteo returned no daily rainfall for ({lat}, {lon})")
-        results.append({
-            "rainfall_mm_24h": round(sum(daily_mm[-1:]), 2),
-            "rainfall_mm_48h": round(sum(daily_mm[-2:]), 2),
-            "rainfall_mm_72h": round(sum(daily_mm[-3:]), 2),
-            "source": "open-meteo-forecast",
-        })
+            results.append({
+                "rainfall_mm_24h": 0.0,
+                "rainfall_mm_48h": 0.0,
+                "rainfall_mm_72h": 0.0,
+                "source": "fallback-empty",
+            })
+        else:
+            results.append({
+                "rainfall_mm_24h": round(sum(daily_mm[-1:]), 2),
+                "rainfall_mm_48h": round(sum(daily_mm[-2:]), 2),
+                "rainfall_mm_72h": round(sum(daily_mm[-3:]), 2),
+                "source": source,
+            })
     return results
